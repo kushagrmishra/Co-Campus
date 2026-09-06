@@ -22,6 +22,7 @@ import { LoginScreen, AUTH_STORAGE_KEY } from './screens/LoginScreen';
 import { AppSkeleton } from './components/AppSkeleton';
 import { SavedNote, SubjectFolder } from './types';
 import { fetchSubjectFolders, fetchAllLocalNotes, fetchNotesBySubject } from './services/storage';
+import { CircleMenu } from './components/CircleMenu';
 
 type BottomTab = 'folders' | 'notes' | 'study' | 'stats';
 type OverlayScreen = 'none' | 'capture' | 'result';
@@ -128,19 +129,14 @@ function MainApp() {
     const [folders, setFolders] = useState<SubjectFolder[]>([]);
     const [refreshKey, setRefreshKey] = useState<number>(0);
 
-    // Navigation Bar Auto-Hide & Swipe Reveal States
-    const [isNavBarVisible, setIsNavBarVisible] = useState<boolean>(true);
+    // Transient Tab Toast for visual swipe feedback
     const [activeToast, setActiveToast] = useState<{
         label: string;
         icon: keyof typeof Ionicons.glyphMap;
     } | null>(null);
 
-    const navBarAnim = useRef(new Animated.Value(0)).current; // 0 = fully visible, 1 = hidden
     const toastAnim = useRef(new Animated.Value(0)).current;
-    const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const isNavBarVisibleRef = useRef<boolean>(true);
-    isNavBarVisibleRef.current = isNavBarVisible;
 
     const currentTabRef = useRef<BottomTab>(currentTab);
     currentTabRef.current = currentTab;
@@ -148,67 +144,6 @@ function MainApp() {
     // Interactive Swipe & Animated Tab Physics
     const dragX = useRef(new Animated.Value(0)).current;
     const isAnimatingTabRef = useRef<boolean>(false);
-
-    // Liquid Gooey Pill Selector Animation
-    const getTabSlotIndex = (tab: BottomTab) => {
-        switch (tab) {
-            case 'folders': return 0;
-            case 'notes': return 1;
-            case 'study': return 3;
-            case 'stats': return 4;
-            default: return 0;
-        }
-    };
-    const tabSlotAnim = useRef(new Animated.Value(getTabSlotIndex(currentTab))).current;
-    const [navBarWidth, setNavBarWidth] = useState<number>(
-        Math.min(Dimensions.get('window').width, 880)
-    );
-
-    useEffect(() => {
-        Animated.spring(tabSlotAnim, {
-            toValue: getTabSlotIndex(currentTab),
-            bounciness: 7,
-            speed: 15,
-            useNativeDriver: true,
-        }).start();
-    }, [currentTab, tabSlotAnim]);
-
-    // Smoothly hide nav bar after 25 seconds
-    const hideNavBar = useCallback(() => {
-        if (hideTimerRef.current) {
-            clearTimeout(hideTimerRef.current);
-            hideTimerRef.current = null;
-        }
-        Animated.timing(navBarAnim, {
-            toValue: 1,
-            duration: 350,
-            useNativeDriver: true,
-        }).start(() => {
-            setIsNavBarVisible(false);
-        });
-    }, [navBarAnim]);
-
-    // Start or reset 25-second countdown to collapse into translucent ball
-    const startHideTimer = useCallback(() => {
-        if (hideTimerRef.current) {
-            clearTimeout(hideTimerRef.current);
-        }
-        hideTimerRef.current = setTimeout(() => {
-            hideNavBar();
-        }, 25000); // 25 seconds
-    }, [hideNavBar]);
-
-    // Reappear nav bar and begin 25s timer
-    const revealNavBar = useCallback(() => {
-        setIsNavBarVisible(true);
-        Animated.spring(navBarAnim, {
-            toValue: 0,
-            bounciness: 4,
-            speed: 14,
-            useNativeDriver: true,
-        }).start();
-        startHideTimer();
-    }, [navBarAnim, startHideTimer]);
 
     // Transient Tab Toast for visual swipe feedback
     const showTabToast = useCallback(
@@ -242,7 +177,6 @@ function MainApp() {
         (targetTab: BottomTab, direction?: 'forward' | 'backward') => {
             const cur = currentTabRef.current;
             if (targetTab === cur) {
-                revealNavBar();
                 Animated.spring(dragX, {
                     toValue: 0,
                     bounciness: 4,
@@ -270,7 +204,6 @@ function MainApp() {
             }).start(() => {
                 // 2. Switch tab
                 setCurrentTab(targetTab);
-                revealNavBar();
                 const tabInfo = TABS.find((t) => t.id === targetTab);
                 if (tabInfo) {
                     showTabToast(tabInfo);
@@ -290,7 +223,7 @@ function MainApp() {
                 });
             });
         },
-        [dragX, revealNavBar, showTabToast]
+        [dragX, showTabToast]
     );
 
     const handleSelectTab = useCallback(
@@ -411,98 +344,13 @@ function MainApp() {
         })
     ).current;
 
-    // PanResponder on the Nav Bar itself: swipe down to dismiss early, swipe left/right to change tab
-    const navBarPanResponder = useRef(
-        PanResponder.create({
-            onStartShouldSetPanResponder: () => false,
-            onMoveShouldSetPanResponder: (_evt, gestureState) => {
-                if (gestureState.dy > 15 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx)) {
-                    return true;
-                }
-                if (Math.abs(gestureState.dx) > 25 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy)) {
-                    return true;
-                }
-                return false;
-            },
-            onPanResponderRelease: (_evt, gestureState) => {
-                if (gestureState.dy > 20) {
-                    hideNavBar();
-                } else if (gestureState.dx < -30) {
-                    handleSwipeNext();
-                } else if (gestureState.dx > 30) {
-                    handleSwipePrev();
-                }
-            },
-        })
-    ).current;
-
-    const navBarTranslateY = navBarAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: [0, 115 + insets.bottom],
-    });
-
-    const circleBtnOpacity = navBarAnim.interpolate({
-        inputRange: [0, 0.35, 1],
-        outputRange: [0, 0, 1],
-    });
-
-    const circleBtnScale = navBarAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: [0.5, 1],
-    });
-
-    const circleBtnTranslateY = navBarAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: [20, 0],
-    });
-
-    // Liquid Morph Bridge interpolations (liquid stretch during collapse & reveal)
-    const morphBridgeOpacity = navBarAnim.interpolate({
-        inputRange: [0, 0.15, 0.85, 1],
-        outputRange: [0, 0.85, 0.85, 0],
-    });
-
-    const morphBridgeScaleX = navBarAnim.interpolate({
-        inputRange: [0, 0.4, 0.7, 1],
-        outputRange: [0.9, 0.5, 0.6, 0.9],
-    });
-
-    const morphBridgeScaleY = navBarAnim.interpolate({
-        inputRange: [0, 0.45, 1],
-        outputRange: [0.4, 1.8, 0.4],
-    });
-
-    const morphBridgeTranslateY = navBarAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: [-8, 22],
-    });
-
-    // Fluid Liquid Active Tab Pill translation
-    const slotWidth = (navBarWidth - 16) / 5;
-    const pillTranslateX = tabSlotAnim.interpolate({
-        inputRange: [0, 1, 2, 3, 4],
-        outputRange: [
-            4,
-            slotWidth + 4,
-            slotWidth * 2 + 4,
-            slotWidth * 3 + 4,
-            slotWidth * 4 + 4,
-        ],
-    });
-
     useEffect(() => {
-        if (isLoggedIn && overlay !== 'capture') {
-            revealNavBar();
-        }
         return () => {
-            if (hideTimerRef.current) {
-                clearTimeout(hideTimerRef.current);
-            }
             if (toastTimerRef.current) {
                 clearTimeout(toastTimerRef.current);
             }
         };
-    }, [isLoggedIn, overlay, revealNavBar]);
+    }, []);
 
     // Check login session with realistic skeleton pre-load
     useEffect(() => {
@@ -765,196 +613,55 @@ function MainApp() {
             {/* Gooey SVG Filter: renders invisible <svg> with declarative feGaussianBlur & feColorMatrix filter */}
             <GooeySvgFilter />
 
-            {/* Gooey Navigation Layer: merges child elements fluidly as they move */}
-            <View
-                style={[
-                    styles.navGooeyContainer,
-                    Platform.OS === 'web' ? ({ filter: 'url(#shadowed-goo)', WebkitFilter: 'url(#shadowed-goo)' } as any) : undefined,
+            {/* CircleMenu: Lucas Bebber circular Gooey Bubble Navigation (Translucent ball at bottom-left auto-collapsing under 25s) */}
+            <CircleMenu
+                items={[
+                    {
+                        id: 'folders',
+                        label: 'Folders',
+                        icon: 'folder-outline',
+                        activeIcon: 'folder',
+                        isActive: currentTab === 'folders',
+                        onPress: () => handleSelectTab('folders'),
+                    },
+                    {
+                        id: 'notes',
+                        label: 'Notes',
+                        icon: 'document-text-outline',
+                        activeIcon: 'document-text',
+                        isActive: currentTab === 'notes',
+                        onPress: () => handleSelectTab('notes'),
+                    },
+                    {
+                        id: 'scan',
+                        label: 'Scan',
+                        icon: 'camera',
+                        activeIcon: 'camera',
+                        isAccent: true,
+                        onPress: () => handleScanPress(null),
+                    },
+                    {
+                        id: 'study',
+                        label: 'Study',
+                        icon: 'school-outline',
+                        activeIcon: 'school',
+                        isActive: currentTab === 'study',
+                        onPress: () => handleSelectTab('study'),
+                    },
+                    {
+                        id: 'stats',
+                        label: 'Stats',
+                        icon: 'bar-chart-outline',
+                        activeIcon: 'bar-chart',
+                        isActive: currentTab === 'stats',
+                        onPress: () => handleSelectTab('stats'),
+                    },
                 ]}
-                pointerEvents="box-none"
-            >
-                {/* Liquid Morph Bridge: stretches between the bar and bottom-left ball during collapse & reveal */}
-                <Animated.View
-                    style={[
-                        styles.liquidMorphBridge,
-                        {
-                            left: Math.max(insets.left, 18) + 10,
-                            bottom: Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 10) + 14,
-                            opacity: morphBridgeOpacity,
-                            transform: [
-                                { scaleX: morphBridgeScaleX },
-                                { scaleY: morphBridgeScaleY },
-                                { translateY: morphBridgeTranslateY },
-                            ],
-                        },
-                    ]}
-                    pointerEvents="none"
-                />
-
-                {/* Animated Bottom Navigation Bar (Auto-collapses under 25 seconds or on manual collapse) */}
-                <Animated.View
-                    style={[
-                        styles.navBarContainer,
-                        {
-                            paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 10 : 8),
-                            transform: [{ translateY: navBarTranslateY }],
-                        },
-                    ]}
-                    {...navBarPanResponder.panHandlers}
-                >
-                    {/* Subtle top collapse handle */}
-                    <TouchableOpacity
-                        style={styles.navBarCollapseHandle}
-                        onPress={hideNavBar}
-                        activeOpacity={0.75}
-                        accessibilityLabel="Collapse navigation bar"
-                    >
-                        <Ionicons name="chevron-down" size={13} color="#75777d" />
-                    </TouchableOpacity>
-
-                    <View
-                        style={styles.navBar}
-                        onLayout={(e) => {
-                            const width = e.nativeEvent.layout.width;
-                            if (width > 0) setNavBarWidth(width);
-                        }}
-                    >
-                        {/* Fluid Liquid Active Tab Pill Selector */}
-                        <Animated.View
-                            style={[
-                                styles.liquidTabPill,
-                                {
-                                    width: Math.max((navBarWidth - 16) / 5 - 8, 50),
-                                    transform: [{ translateX: pillTranslateX }],
-                                },
-                            ]}
-                            pointerEvents="none"
-                        />
-
-                        {/* Folders Tab */}
-                        <TouchableOpacity
-                            style={styles.navItem}
-                            onPress={() => handleSelectTab('folders')}
-                            activeOpacity={0.7}
-                        >
-                            <Ionicons
-                                name={currentTab === 'folders' ? 'folder' : 'folder-outline'}
-                                size={22}
-                                color={currentTab === 'folders' ? '#182232' : '#75777d'}
-                            />
-                            <Text
-                                style={[
-                                    styles.navLabel,
-                                    currentTab === 'folders' && styles.navLabelActive,
-                                ]}
-                            >
-                                Folders
-                            </Text>
-                        </TouchableOpacity>
-
-                        {/* Notes Tab */}
-                        <TouchableOpacity
-                            style={styles.navItem}
-                            onPress={() => handleSelectTab('notes')}
-                            activeOpacity={0.7}
-                        >
-                            <Ionicons
-                                name={currentTab === 'notes' ? 'document-text' : 'document-text-outline'}
-                                size={22}
-                                color={currentTab === 'notes' ? '#182232' : '#75777d'}
-                            />
-                            <Text
-                                style={[
-                                    styles.navLabel,
-                                    currentTab === 'notes' && styles.navLabelActive,
-                                ]}
-                            >
-                                Notes
-                            </Text>
-                        </TouchableOpacity>
-
-                        {/* Elevated Center Shutter Button (Scan) */}
-                        <View style={styles.centerScanWrap}>
-                            <TouchableOpacity
-                                style={styles.centerScanBtn}
-                                onPress={() => handleScanPress(null)}
-                                activeOpacity={0.85}
-                            >
-                                <Ionicons name="camera" size={24} color="#ffffff" />
-                            </TouchableOpacity>
-                            <Text style={styles.centerScanLabel}>Scan</Text>
-                        </View>
-
-                        {/* Study Tab */}
-                        <TouchableOpacity
-                            style={styles.navItem}
-                            onPress={() => handleSelectTab('study')}
-                            activeOpacity={0.7}
-                        >
-                            <Ionicons
-                                name={currentTab === 'study' ? 'school' : 'school-outline'}
-                                size={22}
-                                color={currentTab === 'study' ? '#182232' : '#75777d'}
-                            />
-                            <Text
-                                style={[
-                                    styles.navLabel,
-                                    currentTab === 'study' && styles.navLabelActive,
-                                ]}
-                            >
-                                Study
-                            </Text>
-                        </TouchableOpacity>
-
-                        {/* Stats Tab */}
-                        <TouchableOpacity
-                            style={styles.navItem}
-                            onPress={() => handleSelectTab('stats')}
-                            activeOpacity={0.7}
-                        >
-                            <Ionicons
-                                name={currentTab === 'stats' ? 'bar-chart' : 'bar-chart-outline'}
-                                size={22}
-                                color={currentTab === 'stats' ? '#182232' : '#75777d'}
-                            />
-                            <Text
-                                style={[
-                                    styles.navLabel,
-                                    currentTab === 'stats' && styles.navLabelActive,
-                                ]}
-                            >
-                                Stats
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                </Animated.View>
-
-                {/* Collapsed Translucent Ball with Arrow sitting at bottom-left */}
-                <Animated.View
-                    style={[
-                        styles.circleArrowContainer,
-                        {
-                            left: Math.max(insets.left, 18),
-                            bottom: Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 10) + 8,
-                            opacity: circleBtnOpacity,
-                            transform: [
-                                { scale: circleBtnScale },
-                                { translateY: circleBtnTranslateY },
-                            ],
-                        },
-                    ]}
-                    pointerEvents={isNavBarVisible ? 'none' : 'auto'}
-                >
-                    <TouchableOpacity
-                        style={styles.circleArrowBtn}
-                        onPress={revealNavBar}
-                        activeOpacity={0.78}
-                        accessibilityLabel="Open navigation menu"
-                    >
-                        <Ionicons name="chevron-up" size={24} color="#ffffff" />
-                    </TouchableOpacity>
-                </Animated.View>
-            </View>
+                bottomInset={insets.bottom}
+                leftInset={insets.left}
+                autoCollapseMs={25000}
+                initialOpen={true}
+            />
         </View>
     );
 }
