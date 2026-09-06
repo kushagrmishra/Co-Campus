@@ -2,11 +2,11 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     StyleSheet,
     View,
-    Text,
     TouchableOpacity,
     Animated,
     Platform,
-    Pressable,
+    Dimensions,
+    PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -22,6 +22,7 @@ export interface CircleMenuItem {
 
 export interface CircleMenuProps {
     items: CircleMenuItem[];
+    activeTabId?: string;
     bottomInset?: number;
     leftInset?: number;
     autoCollapseMs?: number; // 25 seconds default
@@ -29,48 +30,41 @@ export interface CircleMenuProps {
     onOpenChange?: (isOpen: boolean) => void;
 }
 
-const CONSTANTS = {
-    itemSize: 48,
-    triggerSize: 52,
-    radius: 125,
-    openStagger: 35, // ms stagger between items expanding
-    closeStagger: 30, // ms stagger between items collapsing
-    autoCollapseMs: 25000, // 25 seconds
-};
-
-// Corner arc placement (bottom-left quadrant fanning into the screen)
-const pointOnArc = (index: number, total: number, radius: number) => {
-    // theta from 0 (horizontal right along bottom) to PI/2 (straight up along left)
-    const minAngle = 0.05; // ~3 deg off bottom
-    const maxAngle = Math.PI / 2 - 0.05; // ~87 deg off horizontal
-    const step = (maxAngle - minAngle) / Math.max(total - 1, 1);
-    const theta = minAngle + index * step;
-    const x = radius * Math.cos(theta);
-    const y = -radius * Math.sin(theta); // negative y moves UP in screen coordinates
-    return { x, y };
-};
+const CONTAINER_SIZE = 248;
+const RADIUS = 96;
+const BASE_ITEM_SIZE = 46;
+const AUTO_COLLAPSE_MS = 25000;
+const TOTAL_ITEMS = 5;
+const STEP_ANGLE = (2 * Math.PI) / TOTAL_ITEMS; // 72 degrees in radians
 
 export const CircleMenu: React.FC<CircleMenuProps> = ({
     items,
+    activeTabId,
     bottomInset = 0,
     leftInset = 0,
-    autoCollapseMs = CONSTANTS.autoCollapseMs,
+    autoCollapseMs = AUTO_COLLAPSE_MS,
     initialOpen = true,
     onOpenChange,
 }) => {
     const [isOpen, setIsOpen] = useState<boolean>(initialOpen);
-    const [activeHoverId, setActiveHoverId] = useState<string | null>(null);
 
-    // Animated values for each item (0 = collapsed at origin, 1 = expanded at arc pos)
-    const itemAnims = useRef<Animated.Value[]>(
-        items.map(() => new Animated.Value(initialOpen ? 1 : 0))
+    // Active item index
+    const initialIndex = Math.max(
+        0,
+        items.findIndex((item) => item.isActive || item.id === activeTabId)
+    );
+    const activeIndexRef = useRef<number>(initialIndex);
+
+    // Current rotation in radians (Animated.Value for smooth 60fps gestures)
+    // When rotationAngle = -initialIndex * STEP_ANGLE, item initialIndex is at the top apex (-PI/2)
+    const rotationAngle = useRef(
+        new Animated.Value(-initialIndex * STEP_ANGLE)
     ).current;
+    const currentAngleVal = useRef<number>(-initialIndex * STEP_ANGLE);
 
-    // Trigger animations: shake, scale, rotate
-    const triggerShake = useRef(new Animated.Value(0)).current;
-    const triggerScale = useRef(new Animated.Value(1)).current;
-    const triggerRotate = useRef(new Animated.Value(initialOpen ? 1 : 0)).current;
-    const triggerOpacity = useRef(new Animated.Value(initialOpen ? 1 : 0.85)).current;
+    // Open/Close transition animations
+    const openAnim = useRef(new Animated.Value(initialOpen ? 1 : 0)).current;
+    const ballAnim = useRef(new Animated.Value(initialOpen ? 0 : 1)).current;
 
     // 25-second auto-collapse timer
     const autoCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -84,83 +78,53 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
         }
     }, []);
 
-    const playShakeAnimation = useCallback(() => {
-        Animated.sequence([
-            Animated.timing(triggerShake, { toValue: 3, duration: 40, useNativeDriver: true }),
-            Animated.timing(triggerShake, { toValue: -3, duration: 40, useNativeDriver: true }),
-            Animated.timing(triggerShake, { toValue: 2, duration: 40, useNativeDriver: true }),
-            Animated.timing(triggerShake, { toValue: -2, duration: 40, useNativeDriver: true }),
-            Animated.timing(triggerShake, { toValue: 0, duration: 40, useNativeDriver: true }),
-        ]).start();
-    }, [triggerShake]);
-
-    // Close animation with staggered sucking back into the translucent ball
+    // Close / minimize into bottom-left translucent ball
     const closeMenu = useCallback(() => {
         clearCollapseTimer();
-        playShakeAnimation();
 
-        // Trigger pulse and rotation
         Animated.parallel([
-            Animated.sequence([
-                Animated.timing(triggerScale, { toValue: 1.15, duration: 100, useNativeDriver: true }),
-                Animated.timing(triggerScale, { toValue: 1, duration: 150, useNativeDriver: true }),
-            ]),
-            Animated.timing(triggerRotate, { toValue: 0, duration: 250, useNativeDriver: true }),
-            Animated.timing(triggerOpacity, { toValue: 0.82, duration: 250, useNativeDriver: true }),
-        ]).start();
-
-        // Staggered collapse back to (0, 0)
-        items.forEach((_, idx) => {
-            const reverseIdx = items.length - 1 - idx;
-            setTimeout(() => {
-                Animated.spring(itemAnims[reverseIdx], {
-                    toValue: 0,
-                    bounciness: 5,
-                    speed: 18,
-                    useNativeDriver: true,
-                }).start();
-            }, idx * CONSTANTS.closeStagger);
+            Animated.timing(openAnim, {
+                toValue: 0,
+                duration: 220,
+                useNativeDriver: true,
+            }),
+            Animated.spring(ballAnim, {
+                toValue: 1,
+                bounciness: 6,
+                speed: 16,
+                useNativeDriver: true,
+            }),
+        ]).start(() => {
+            setIsOpen(false);
+            onOpenChange?.(false);
         });
+    }, [ballAnim, clearCollapseTimer, onOpenChange, openAnim]);
 
-        setIsOpen(false);
-        onOpenChange?.(false);
-    }, [clearCollapseTimer, items, itemAnims, onOpenChange, playShakeAnimation, triggerOpacity, triggerRotate, triggerScale]);
-
-    // Open animation with staggered liquid pop-out
+    // Open / expand into big circle dial
     const openMenu = useCallback(() => {
         clearCollapseTimer();
-
-        // Trigger pulse and rotation
-        Animated.parallel([
-            Animated.sequence([
-                Animated.timing(triggerScale, { toValue: 0.9, duration: 80, useNativeDriver: true }),
-                Animated.timing(triggerScale, { toValue: 1.08, duration: 120, useNativeDriver: true }),
-                Animated.timing(triggerScale, { toValue: 1, duration: 100, useNativeDriver: true }),
-            ]),
-            Animated.timing(triggerRotate, { toValue: 1, duration: 280, useNativeDriver: true }),
-            Animated.timing(triggerOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-        ]).start();
-
-        // Staggered spring expansion
-        items.forEach((_, idx) => {
-            setTimeout(() => {
-                Animated.spring(itemAnims[idx], {
-                    toValue: 1,
-                    bounciness: 8,
-                    speed: 16,
-                    useNativeDriver: true,
-                }).start();
-            }, idx * CONSTANTS.openStagger);
-        });
-
         setIsOpen(true);
         onOpenChange?.(true);
+
+        Animated.parallel([
+            Animated.spring(openAnim, {
+                toValue: 1,
+                bounciness: 7,
+                speed: 14,
+                useNativeDriver: true,
+            }),
+            Animated.timing(ballAnim, {
+                toValue: 0,
+                duration: 180,
+                useNativeDriver: true,
+            }),
+        ]).start();
 
         // Schedule 25-second auto-collapse
         autoCollapseTimerRef.current = setTimeout(() => {
             closeMenu();
         }, autoCollapseMs);
-    }, [autoCollapseMs, clearCollapseTimer, closeMenu, items, itemAnims, onOpenChange, triggerOpacity, triggerRotate, triggerScale]);
+    }, [autoCollapseMs, ballAnim, clearCollapseTimer, closeMenu, onOpenChange, openAnim]);
 
     const resetCollapseTimer = useCallback(() => {
         clearCollapseTimer();
@@ -173,285 +137,405 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
 
     // Mount lifecycle
     useEffect(() => {
+        const id = rotationAngle.addListener(({ value }) => {
+            currentAngleVal.current = value;
+        });
         if (initialOpen) {
             autoCollapseTimerRef.current = setTimeout(() => {
                 closeMenu();
             }, autoCollapseMs);
         }
         return () => {
+            rotationAngle.removeListener(id);
             clearCollapseTimer();
         };
-    }, [autoCollapseMs, clearCollapseTimer, closeMenu, initialOpen]);
+    }, [autoCollapseMs, clearCollapseTimer, closeMenu, initialOpen, rotationAngle]);
 
-    const handleTriggerPress = () => {
-        if (isOpen) {
-            closeMenu();
-        } else {
-            openMenu();
+    // Rotate to target item
+    const rotateToItem = useCallback(
+        (targetIndex: number, shouldTriggerPress = true) => {
+            resetCollapseTimer();
+            const boundedIndex = ((targetIndex % TOTAL_ITEMS) + TOTAL_ITEMS) % TOTAL_ITEMS;
+            activeIndexRef.current = boundedIndex;
+
+            // Target rotation so item boundedIndex is at apex (-Math.PI / 2)
+            // Current angle normalized: find closest multiple of STEP_ANGLE
+            const curVal = currentAngleVal.current;
+            const targetOffset = -boundedIndex * STEP_ANGLE;
+            // Find k such that targetOffset + 2*PI*k is closest to curVal
+            const diff = targetOffset - curVal;
+            const k = Math.round(diff / (2 * Math.PI));
+            const nearestAngle = targetOffset - k * (2 * Math.PI);
+
+            Animated.spring(rotationAngle, {
+                toValue: nearestAngle,
+                bounciness: 6,
+                speed: 16,
+                useNativeDriver: true,
+            }).start(() => {
+                if (shouldTriggerPress) {
+                    items[boundedIndex]?.onPress();
+                }
+            });
+        },
+        [items, resetCollapseTimer, rotationAngle]
+    );
+
+    // Sync rotation on external active tab change
+    useEffect(() => {
+        if (activeTabId) {
+            const idx = items.findIndex((i) => i.id === activeTabId);
+            if (idx !== -1 && idx !== activeIndexRef.current) {
+                rotateToItem(idx, false);
+            }
         }
-    };
+    }, [activeTabId, items, rotateToItem]);
 
-    const handleItemPress = (item: CircleMenuItem) => {
-        resetCollapseTimer();
-        item.onPress();
-    };
+    // PanResponder for spinning / scrolling the circular wheel
+    const panStartAngle = useRef<number>(0);
+    const panStartRotation = useRef<number>(0);
+    const centerCoords = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const circleContainerRef = useRef<View>(null);
 
-    // Rotation interpolation for trigger icon
-    const triggerSpin = triggerRotate.interpolate({
-        inputRange: [0, 1],
-        outputRange: ['0deg', '90deg'],
-    });
+    const panResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponder: (_evt, gestureState) => {
+                return (
+                    Math.abs(gestureState.dx) > 4 || Math.abs(gestureState.dy) > 4
+                );
+            },
+            onPanResponderGrant: (evt) => {
+                resetCollapseTimer();
+                panStartRotation.current = currentAngleVal.current;
 
-    const triggerContainerPos = {
-        bottom: Math.max(bottomInset, Platform.OS === 'android' ? 18 : 14) + 12,
-        left: Math.max(leftInset, 18),
-    };
+                if (circleContainerRef.current) {
+                    circleContainerRef.current.measure((_x, _y, width, height, pageX, pageY) => {
+                        centerCoords.current = {
+                            x: pageX + width / 2,
+                            y: pageY + height / 2,
+                        };
+                    });
+                }
+                const touchX = evt.nativeEvent.pageX;
+                const touchY = evt.nativeEvent.pageY;
+                panStartAngle.current = Math.atan2(
+                    touchY - centerCoords.current.y,
+                    touchX - centerCoords.current.x
+                );
+            },
+            onPanResponderMove: (evt, gestureState) => {
+                resetCollapseTimer();
+                const touchX = evt.nativeEvent.pageX;
+                const touchY = evt.nativeEvent.pageY;
+                const currentTouchAngle = Math.atan2(
+                    touchY - centerCoords.current.y,
+                    touchX - centerCoords.current.x
+                );
+                let deltaAngle = currentTouchAngle - panStartAngle.current;
+
+                // Handle boundary wrap around -PI to PI
+                if (deltaAngle > Math.PI) deltaAngle -= 2 * Math.PI;
+                if (deltaAngle < -Math.PI) deltaAngle += 2 * Math.PI;
+
+                // Also incorporate horizontal swipe for intuitive thumb rotation
+                const swipeContribution = gestureState.dx * 0.008;
+                const newRotation = panStartRotation.current + deltaAngle + swipeContribution;
+                rotationAngle.setValue(newRotation);
+            },
+            onPanResponderRelease: () => {
+                resetCollapseTimer();
+                // When rotation stops, calculate which item is closest to the apex (-PI/2)
+                // Position of item i is: -PI/2 + i * STEP + rotation
+                // Apex is when -PI/2 + i * STEP + rotation = -PI/2 (mod 2*PI)
+                // i.e., i * STEP + rotation = 0 (mod 2*PI)
+                // i = -rotation / STEP
+                const currentRot = currentAngleVal.current;
+                const rawIdx = -currentRot / STEP_ANGLE;
+                const nearestIdx = Math.round(rawIdx);
+                rotateToItem(nearestIdx, true); // Opens that page automatically!
+            },
+        })
+    ).current;
+
+    // Calculate positions for each of the 5 circular items around the wheel
+    // Using Animated.Value listener to drive coordinates smoothly
+    const [renderAngle, setRenderAngle] = useState<number>(currentAngleVal.current);
+
+    useEffect(() => {
+        const id = rotationAngle.addListener(({ value }) => {
+            setRenderAngle(value);
+        });
+        return () => rotationAngle.removeListener(id);
+    }, [rotationAngle]);
+
+    const activeItem = items[activeIndexRef.current] || items[0];
 
     return (
-        <View
-            style={[
-                styles.wrapper,
-                triggerContainerPos,
-                // Apply SVG Gooey Filter on Web to make circular child blobs merge liquidly
-                Platform.OS === 'web'
-                    ? ({
-                          filter: 'url(#shadowed-goo)',
-                          WebkitFilter: 'url(#shadowed-goo)',
-                      } as any)
-                    : undefined,
-            ]}
-            pointerEvents="box-none"
-        >
-            {/* Circular Menu Items expanding out on the arc */}
-            {items.map((item, index) => {
-                const { x: targetX, y: targetY } = pointOnArc(index, items.length, CONSTANTS.radius);
-                const anim = itemAnims[index];
-
-                const translateX = anim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0, targetX],
-                });
-
-                const translateY = anim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0, targetY],
-                });
-
-                const scale = anim.interpolate({
-                    inputRange: [0, 0.4, 1],
-                    outputRange: [0.35, 0.7, 1],
-                });
-
-                const opacity = anim.interpolate({
-                    inputRange: [0, 0.2, 1],
-                    outputRange: [0, 0.8, 1],
-                });
-
-                const isItemActive = item.isActive;
-                const isScan = item.isAccent;
-
-                return (
-                    <Animated.View
-                        key={`circle-item-${item.id}`}
-                        style={[
-                            styles.itemNode,
-                            {
-                                opacity,
-                                transform: [
-                                    { translateX },
-                                    { translateY },
-                                    { scale },
-                                ],
-                            },
-                        ]}
-                        pointerEvents={isOpen ? 'auto' : 'none'}
-                    >
-                        <Pressable
-                            onPress={() => handleItemPress(item)}
-                            onHoverIn={() => setActiveHoverId(item.id)}
-                            onHoverOut={() => setActiveHoverId(null)}
-                            style={({ pressed }) => [
-                                styles.itemButton,
-                                isItemActive && styles.itemButtonActive,
-                                isScan && styles.itemButtonScan,
-                                pressed && styles.itemButtonPressed,
-                            ]}
-                            accessibilityRole="button"
-                            accessibilityLabel={item.label}
-                        >
-                            <Ionicons
-                                name={
-                                    isItemActive && item.activeIcon
-                                        ? item.activeIcon
-                                        : item.icon
-                                }
-                                size={isScan ? 22 : 20}
-                                color={
-                                    isScan
-                                        ? '#ffffff'
-                                        : isItemActive
-                                        ? '#ffffff'
-                                        : '#2d3748'
-                                }
-                            />
-
-                            {/* Active Tab Dot */}
-                            {isItemActive && !isScan && (
-                                <View style={styles.activeDot} />
-                            )}
-                        </Pressable>
-
-                        {/* Floating Tooltip Label (visible on hover or when active) */}
-                        {(isOpen && (activeHoverId === item.id || isItemActive)) && (
-                            <View style={styles.labelPill} pointerEvents="none">
-                                <Text style={styles.labelText}>{item.label}</Text>
-                            </View>
-                        )}
-                    </Animated.View>
-                );
-            })}
-
-            {/* Main Translucent Trigger Ball sitting at bottom-left */}
+        <>
+            {/* 1. Small Translucent Ball at Bottom-Left when Collapsed */}
             <Animated.View
                 style={[
-                    styles.triggerNode,
+                    styles.ballContainer,
                     {
+                        left: Math.max(leftInset, 18),
+                        bottom: Math.max(bottomInset, Platform.OS === 'android' ? 18 : 14) + 12,
+                        opacity: ballAnim,
                         transform: [
-                            { translateX: triggerShake },
-                            { scale: triggerScale },
+                            { scale: ballAnim },
+                            {
+                                translateY: ballAnim.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [20, 0],
+                                }),
+                            },
                         ],
-                        opacity: triggerOpacity,
                     },
                 ]}
+                pointerEvents={isOpen ? 'none' : 'auto'}
             >
                 <TouchableOpacity
-                    style={[
-                        styles.triggerButton,
-                        isOpen ? styles.triggerButtonOpen : styles.triggerButtonCollapsed,
-                    ]}
-                    onPress={handleTriggerPress}
-                    activeOpacity={0.82}
+                    style={styles.ballButton}
+                    onPress={openMenu}
+                    activeOpacity={0.8}
                     accessibilityRole="button"
-                    accessibilityLabel={isOpen ? 'Collapse navigation menu' : 'Expand navigation menu'}
+                    accessibilityLabel="Open circular navigation dial"
                 >
-                    <Animated.View style={{ transform: [{ rotate: triggerSpin }] }}>
-                        <Ionicons
-                            name={isOpen ? 'close' : 'compass'}
-                            size={22}
-                            color="#ffffff"
-                        />
-                    </Animated.View>
+                    <Ionicons
+                        name={activeItem?.icon || 'compass'}
+                        size={22}
+                        color="#ffffff"
+                    />
                 </TouchableOpacity>
             </Animated.View>
-        </View>
+
+            {/* 2. Big Circular Rotary Dial Wheel when Open */}
+            <Animated.View
+                ref={circleContainerRef}
+                style={[
+                    styles.circleWrapper,
+                    {
+                        bottom: Math.max(bottomInset, Platform.OS === 'android' ? 18 : 14) + 14,
+                        opacity: openAnim,
+                        transform: [
+                            { scale: openAnim },
+                            {
+                                translateY: openAnim.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [30, 0],
+                                }),
+                            },
+                        ],
+                    },
+                    Platform.OS === 'web'
+                        ? ({
+                              filter: 'url(#shadowed-goo)',
+                              WebkitFilter: 'url(#shadowed-goo)',
+                          } as any)
+                        : undefined,
+                ]}
+                pointerEvents={isOpen ? 'box-none' : 'none'}
+                {...panResponder.panHandlers}
+            >
+                {/* Subtle Rotary Dial Guide Ring */}
+                <View style={styles.rotaryGuideTrack} pointerEvents="none" />
+
+                {/* Circular Navigation Nodes distributed evenly around the 360° circle */}
+                {items.map((item, index) => {
+                    // Angle for item index at current rotation
+                    // -Math.PI / 2 is the apex (12 o'clock / top position)
+                    const theta = -Math.PI / 2 + index * STEP_ANGLE + renderAngle;
+                    const x = RADIUS * Math.cos(theta);
+                    const y = RADIUS * Math.sin(theta);
+
+                    // Distance from apex (-Math.PI / 2)
+                    let angleDiff = Math.abs((theta % (2 * Math.PI)) - (-Math.PI / 2));
+                    if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+
+                    // Centered/active item is BIG (1.28x), others are small (0.82x)
+                    const isApex = angleDiff < 0.45;
+                    const scale = isApex ? 1.28 : 0.82;
+                    const isScan = item.isAccent;
+                    const isCurrentActive = isApex || item.isActive;
+
+                    return (
+                        <View
+                            key={`circle-item-${item.id}`}
+                            style={[
+                                styles.itemNode,
+                                {
+                                    transform: [
+                                        { translateX: x },
+                                        { translateY: y },
+                                        { scale },
+                                    ],
+                                },
+                            ]}
+                        >
+                            <TouchableOpacity
+                                style={[
+                                    styles.itemBubble,
+                                    isScan
+                                        ? styles.itemBubbleScan
+                                        : isCurrentActive
+                                        ? styles.itemBubbleActive
+                                        : styles.itemBubbleInactive,
+                                ]}
+                                onPress={() => rotateToItem(index, true)}
+                                activeOpacity={0.82}
+                                accessibilityRole="button"
+                                accessibilityLabel={item.label}
+                            >
+                                <Ionicons
+                                    name={
+                                        isCurrentActive && item.activeIcon
+                                            ? item.activeIcon
+                                            : item.icon
+                                    }
+                                    size={isScan ? 24 : isApex ? 22 : 19}
+                                    color={
+                                        isScan || isCurrentActive
+                                            ? '#ffffff'
+                                            : '#475569'
+                                    }
+                                />
+
+                                {/* Active Tab Dot */}
+                                {isCurrentActive && !isScan && (
+                                    <View style={styles.activeDot} />
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    );
+                })}
+
+                {/* Center Hub Trigger Button: Tap to collapse into small ball */}
+                <TouchableOpacity
+                    style={styles.centerHubBtn}
+                    onPress={closeMenu}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Collapse circular menu"
+                >
+                    <Ionicons name="close" size={20} color="#ffffff" />
+                </TouchableOpacity>
+            </Animated.View>
+        </>
     );
 };
 
 const styles = StyleSheet.create({
-    wrapper: {
+    // Collapsed Translucent Ball at Bottom-Left
+    ballContainer: {
         position: 'absolute',
-        width: CONSTANTS.triggerSize,
-        height: CONSTANTS.triggerSize,
-        alignItems: 'center',
-        justifyContent: 'center',
+        width: 50,
+        height: 50,
         zIndex: 9999,
     },
-    triggerNode: {
-        width: CONSTANTS.triggerSize,
-        height: CONSTANTS.triggerSize,
+    ballButton: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        backgroundColor: 'rgba(24, 34, 50, 0.82)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255, 255, 255, 0.32)',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 100,
-    },
-    triggerButton: {
-        width: CONSTANTS.triggerSize,
-        height: CONSTANTS.triggerSize,
-        borderRadius: CONSTANTS.triggerSize / 2,
-        alignItems: 'center',
-        justifyContent: 'center',
-        // Translucent liquid styling
         shadowColor: '#000000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.28,
         shadowRadius: 8,
         elevation: 8,
     },
-    triggerButtonCollapsed: {
-        backgroundColor: 'rgba(24, 34, 50, 0.82)',
-        borderWidth: 1.5,
-        borderColor: 'rgba(255, 255, 255, 0.28)',
+
+    // Expanded Big Circular Rotary Dial Wheel
+    circleWrapper: {
+        position: 'absolute',
+        alignSelf: 'center',
+        width: CONTAINER_SIZE,
+        height: CONTAINER_SIZE,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999,
     },
-    triggerButtonOpen: {
+    rotaryGuideTrack: {
+        position: 'absolute',
+        width: RADIUS * 2 + 10,
+        height: RADIUS * 2 + 10,
+        borderRadius: RADIUS + 5,
+        borderWidth: 1.5,
+        borderColor: 'rgba(24, 34, 50, 0.1)',
+        borderStyle: 'dashed',
+        backgroundColor: 'rgba(255, 255, 255, 0.45)',
+    },
+
+    // Center Hub Button
+    centerHubBtn: {
+        position: 'absolute',
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         backgroundColor: '#182232',
         borderWidth: 1.5,
-        borderColor: 'rgba(255, 255, 255, 0.4)',
+        borderColor: 'rgba(255, 255, 255, 0.35)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.25,
+        shadowRadius: 6,
+        elevation: 6,
+        zIndex: 100,
     },
+
+    // Circular Node
     itemNode: {
         position: 'absolute',
-        width: CONSTANTS.itemSize,
-        height: CONSTANTS.itemSize,
+        width: BASE_ITEM_SIZE,
+        height: BASE_ITEM_SIZE,
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 90,
     },
-    itemButton: {
-        width: CONSTANTS.itemSize,
-        height: CONSTANTS.itemSize,
-        borderRadius: CONSTANTS.itemSize / 2,
-        backgroundColor: '#ffffff',
+    itemBubble: {
+        width: BASE_ITEM_SIZE,
+        height: BASE_ITEM_SIZE,
+        borderRadius: BASE_ITEM_SIZE / 2,
         alignItems: 'center',
         justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
         shadowColor: '#0f172a',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.16,
-        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.18,
+        shadowRadius: 8,
         elevation: 6,
     },
-    itemButtonActive: {
+    itemBubbleInactive: {
+        backgroundColor: '#ffffff',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    itemBubbleActive: {
         backgroundColor: '#182232',
+        borderWidth: 1.5,
         borderColor: '#0f172a',
         shadowColor: '#182232',
-        shadowOpacity: 0.32,
-        shadowRadius: 8,
+        shadowOpacity: 0.38,
+        shadowRadius: 10,
     },
-    itemButtonScan: {
+    itemBubbleScan: {
         backgroundColor: '#1e7e45',
+        borderWidth: 1.5,
         borderColor: '#166534',
         shadowColor: '#1e7e45',
-        shadowOpacity: 0.4,
-        shadowRadius: 8,
-    },
-    itemButtonPressed: {
-        transform: [{ scale: 0.94 }],
+        shadowOpacity: 0.42,
+        shadowRadius: 10,
     },
     activeDot: {
         position: 'absolute',
-        bottom: 5,
+        bottom: 4,
         width: 4,
         height: 4,
         borderRadius: 2,
         backgroundColor: '#22c55e',
-    },
-    labelPill: {
-        position: 'absolute',
-        bottom: -22,
-        backgroundColor: 'rgba(15, 23, 42, 0.88)',
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-    },
-    labelText: {
-        color: '#ffffff',
-        fontSize: 10,
-        fontWeight: '600',
-        letterSpacing: 0.2,
     },
 });

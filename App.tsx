@@ -657,6 +657,7 @@ function MainApp() {
                         onPress: () => handleSelectTab('stats'),
                     },
                 ]}
+                activeTabId={currentTab}
                 bottomInset={insets.bottom}
                 leftInset={insets.left}
                 autoCollapseMs={25000}
