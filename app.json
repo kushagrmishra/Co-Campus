@@ -21,6 +21,12 @@
       "bundler": "metro",
       "favicon": "./assets/favicon.png"
     },
-    "plugins": []
+    "plugins": [],
+    "extra": {
+      "eas": {
+        "projectId": "fb6d4a58-9de9-4f9e-a047-0d3c5c4391b5"
+      }
+    },
+    "owner": "maker_fan4"
   }
 }

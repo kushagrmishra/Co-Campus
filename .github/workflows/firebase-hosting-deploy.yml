@@ -1,0 +1,42 @@
+name: Deploy to Firebase Hosting on push
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Web App
+        run: npx expo export --platform web
+        env:
+          EXPO_PUBLIC_FIREBASE_API_KEY: ${{ secrets.EXPO_PUBLIC_FIREBASE_API_KEY || 'AIzaSyA9c8pV4kMg-8oxpYQ0bU5PPapaoKBivzk' }}
+          EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || 'cocampus-f8179.firebaseapp.com' }}
+          EXPO_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_PROJECT_ID || 'cocampus-f8179' }}
+          EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET || 'cocampus-f8179.firebasestorage.app' }}
+          EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '143831216762' }}
+          EXPO_PUBLIC_FIREBASE_APP_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_APP_ID || '1:143831216762:web:5722fe78daf2b332a441c3' }}
+          EXPO_PUBLIC_LLM_API_KEY: ${{ secrets.EXPO_PUBLIC_LLM_API_KEY || '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' }}
+          EXPO_PUBLIC_YOUTUBE_API_KEY: ${{ secrets.EXPO_PUBLIC_YOUTUBE_API_KEY || 'AIzaSyBJlLyAq2IDl93GjOUElGNo1L5lhDFPJeE' }}
+          EXPO_PUBLIC_GEMINI_API_KEY: ${{ secrets.EXPO_PUBLIC_GEMINI_API_KEY || 'AQ.Ab8RN6J-3uryBydK4G9C8yd0O7znHms2bI_Y1KtOmwfJ0-EvTw' }}
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_COCAMPUS_F8179 }}
+          channelId: live
+          projectId: cocampus-f8179
+        continue-on-error: true

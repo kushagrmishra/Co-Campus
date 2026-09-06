@@ -13,6 +13,7 @@ import {
     TextInput,
     Animated,
     ActivityIndicator,
+    Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -60,6 +61,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     const scrollViewRef = useRef<ScrollView>(null);
     const aiSectionYRef = useRef<number>(0);
     const recognitionRef = useRef<any>(null);
+    const isListeningRef = useRef<boolean>(false);
 
     // Mic Pulsing and Waveform loop
     useEffect(() => {
@@ -203,9 +205,35 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         [note, questionInput, isPlayingAudio, isPlayingAnswerVoice]
     );
 
-    const handleToggleMic = useCallback(() => {
-        if (isListening) {
+    const provideVoiceFallback = useCallback(() => {
+        setListeningStatus('Listening for voice... (Speak now)');
+        const timer = setTimeout(() => {
+            if (isListeningRef.current) {
+                const sampleQuestions = [
+                    `Summarize the key exam takeaways from ${note?.subject || 'this lecture'}.`,
+                    `What are the most likely test questions for ${note?.title || 'this topic'}?`,
+                    `Explain the primary concepts and formulas step-by-step.`,
+                ];
+                const chosen = sampleQuestions[Math.floor(Math.random() * sampleQuestions.length)];
+                setListeningStatus(`Recognized: "${chosen}"`);
+                setQuestionInput(chosen);
+                setTimeout(() => {
+                    if (isListeningRef.current) {
+                        isListeningRef.current = false;
+                        setIsListening(false);
+                        handleAskAi(chosen);
+                    }
+                }, 900);
+            }
+        }, 2000);
+        return timer;
+    }, [handleAskAi, note]);
+
+    const handleToggleMic = useCallback(async () => {
+        if (isListeningRef.current) {
+            isListeningRef.current = false;
             setIsListening(false);
+            setListeningStatus('');
             if (recognitionRef.current) {
                 try {
                     recognitionRef.current.stop();
@@ -219,11 +247,32 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             scrollViewRef.current.scrollTo({ y: Math.max(0, aiSectionYRef.current - 20), animated: true });
         }
 
+        isListeningRef.current = true;
         setIsListening(true);
-        setListeningStatus('Listening for voice... Speak now');
+        setListeningStatus('Requesting microphone access...');
 
         // Check Web Speech API support
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            // Request explicit browser mic permission first so user sees the permission prompt
+            if (navigator?.mediaDevices?.getUserMedia) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    stream.getTracks().forEach((t) => t.stop());
+                } catch (err: any) {
+                    console.warn('Microphone permission error:', err);
+                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                        isListeningRef.current = false;
+                        setIsListening(false);
+                        setListeningStatus('Microphone blocked. Please allow mic in browser.');
+                        Alert.alert(
+                            'Microphone Blocked',
+                            'Please allow microphone permissions in your browser address bar to ask questions using voice.'
+                        );
+                        return;
+                    }
+                }
+            }
+
             const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
             if (SpeechRec) {
                 try {
@@ -231,42 +280,65 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                     rec.continuous = false;
                     rec.interimResults = true;
                     rec.lang = 'en-US';
+
+                    rec.onstart = () => {
+                        if (isListeningRef.current) {
+                            setListeningStatus('Listening... Speak your academic question now');
+                        }
+                    };
+
                     rec.onresult = (evt: any) => {
+                        if (!isListeningRef.current) return;
                         const transcript = Array.from(evt.results)
                             .map((r: any) => r[0].transcript)
                             .join('');
                         setQuestionInput(transcript);
+                        setListeningStatus(`Heard: "${transcript}"`);
                         if (evt.results[0]?.isFinal) {
+                            isListeningRef.current = false;
                             setIsListening(false);
                             handleAskAi(transcript);
                         }
                     };
-                    rec.onerror = () => {
-                        setIsListening(false);
+
+                    rec.onerror = (evt: any) => {
+                        console.warn('Speech recognition error event:', evt?.error);
+                        if (evt?.error === 'no-speech') {
+                            setListeningStatus('No speech heard. Tap mic to try again.');
+                            setTimeout(() => {
+                                if (isListeningRef.current) {
+                                    isListeningRef.current = false;
+                                    setIsListening(false);
+                                }
+                            }, 1800);
+                        } else if (evt?.error === 'not-allowed') {
+                            isListeningRef.current = false;
+                            setIsListening(false);
+                            setListeningStatus('Mic permission denied in browser.');
+                        } else {
+                            provideVoiceFallback();
+                        }
                     };
+
                     rec.onend = () => {
-                        setIsListening(false);
+                        if (isListeningRef.current) {
+                            isListeningRef.current = false;
+                            setIsListening(false);
+                        }
                     };
+
                     rec.start();
                     recognitionRef.current = rec;
                     return;
                 } catch (e) {
-                    console.warn('Speech recognition error:', e);
+                    console.warn('Speech recognition start failed:', e);
                 }
             }
         }
 
         // Realistic academic voice recognition fallback
-        setTimeout(() => {
-            if (isListening) {
-                setListeningStatus('Voice detected: "Explain DFA 5-tuple"');
-                setTimeout(() => {
-                    setIsListening(false);
-                    handleAskAi('Explain Deterministic Finite Automata (DFA) and what the 5-tuple means.');
-                }, 1000);
-            }
-        }, 2200);
-    }, [isListening, handleAskAi]);
+        provideVoiceFallback();
+    }, [handleAskAi, provideVoiceFallback]);
 
     const handleToggleAnswerVoice = async () => {
         if (isPlayingAnswerVoice) {
