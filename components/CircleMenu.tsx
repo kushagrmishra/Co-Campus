@@ -34,6 +34,7 @@ export interface CircleMenuProps {
 const CONTAINER_SIZE = 248;
 const RADIUS = 96;
 const BASE_ITEM_SIZE = 46;
+const CENTER_BTN_SIZE = 44;
 const AUTO_COLLAPSE_MS = 15000; // 15 seconds
 const TOTAL_ITEMS = 5;
 const STEP_ANGLE = (2 * Math.PI) / TOTAL_ITEMS; // 72 degrees in radians
@@ -579,26 +580,27 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                     );
                 })}
 
-                {/* Center Hub Trigger Button: Tap to collapse into small ball with shake & spin micro-animation */}
+                {/* Center Hub Trigger Button: Dead-center aligned with shake & spin micro-animation */}
                 <Animated.View
-                    style={{
-                        position: 'absolute',
-                        zIndex: 100,
-                        transform: [
-                            {
-                                translateX: triggerShakeAnim.interpolate({
-                                    inputRange: [0, 0.25, 0.5, 0.75, 1],
-                                    outputRange: [0, -3, 3, -2, 0],
-                                }),
-                            },
-                            {
-                                rotate: triggerRotateAnim.interpolate({
-                                    inputRange: [-1, 0],
-                                    outputRange: ['-360deg', '0deg'],
-                                }),
-                            },
-                        ],
-                    }}
+                    style={[
+                        styles.centerHubWrapper,
+                        {
+                            transform: [
+                                {
+                                    translateX: triggerShakeAnim.interpolate({
+                                        inputRange: [0, 0.25, 0.5, 0.75, 1],
+                                        outputRange: [0, -3, 3, -2, 0],
+                                    }),
+                                },
+                                {
+                                    rotate: triggerRotateAnim.interpolate({
+                                        inputRange: [-1, 0],
+                                        outputRange: ['-360deg', '0deg'],
+                                    }),
+                                },
+                            ],
+                        },
+                    ]}
                 >
                     <TouchableOpacity
                         style={[
@@ -616,7 +618,7 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                         accessibilityRole="button"
                         accessibilityLabel="Collapse circular menu"
                     >
-                        <Ionicons name="close" size={20} color="#ffffff" />
+                        <Ionicons name="close" size={22} color="#ffffff" style={styles.centerHubCloseIcon} />
                     </TouchableOpacity>
                 </Animated.View>
             </Animated.View>
@@ -671,6 +673,8 @@ const styles = StyleSheet.create({
     },
     rotaryGuideTrack: {
         position: 'absolute',
+        top: (CONTAINER_SIZE - (RADIUS * 2 + 10)) / 2,
+        left: (CONTAINER_SIZE - (RADIUS * 2 + 10)) / 2,
         width: RADIUS * 2 + 10,
         height: RADIUS * 2 + 10,
         borderRadius: RADIUS + 5,
@@ -680,12 +684,21 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255, 255, 255, 0.72)',
     },
 
-    // Center Hub Button
-    centerHubBtn: {
+    // Center Hub Button Wrapper & Inner Button (100% Dead Centered)
+    centerHubWrapper: {
         position: 'absolute',
-        width: 44,
-        height: 44,
-        borderRadius: 22,
+        top: (CONTAINER_SIZE - CENTER_BTN_SIZE) / 2,
+        left: (CONTAINER_SIZE - CENTER_BTN_SIZE) / 2,
+        width: CENTER_BTN_SIZE,
+        height: CENTER_BTN_SIZE,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 100,
+    },
+    centerHubBtn: {
+        width: CENTER_BTN_SIZE,
+        height: CENTER_BTN_SIZE,
+        borderRadius: CENTER_BTN_SIZE / 2,
         backgroundColor: 'rgba(15, 23, 42, 0.92)',
         borderWidth: 1.5,
         borderColor: 'rgba(255, 255, 255, 0.48)',
@@ -696,12 +709,18 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.28,
         shadowRadius: 8,
         elevation: 6,
-        zIndex: 100,
+    },
+    centerHubCloseIcon: {
+        textAlign: 'center',
+        lineHeight: 22,
+        alignSelf: 'center',
     },
 
     // Circular Node
     itemNode: {
         position: 'absolute',
+        top: (CONTAINER_SIZE - BASE_ITEM_SIZE) / 2,
+        left: (CONTAINER_SIZE - BASE_ITEM_SIZE) / 2,
         width: BASE_ITEM_SIZE,
         height: BASE_ITEM_SIZE,
         alignItems: 'center',
