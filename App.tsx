@@ -660,7 +660,7 @@ function MainApp() {
                 activeTabId={currentTab}
                 bottomInset={insets.bottom}
                 leftInset={insets.left}
-                autoCollapseMs={25000}
+                autoCollapseMs={15000}
                 initialOpen={true}
             />
         </View>

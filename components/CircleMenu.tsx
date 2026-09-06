@@ -33,7 +33,7 @@ export interface CircleMenuProps {
 const CONTAINER_SIZE = 248;
 const RADIUS = 96;
 const BASE_ITEM_SIZE = 46;
-const AUTO_COLLAPSE_MS = 25000;
+const AUTO_COLLAPSE_MS = 15000; // 15 seconds
 const TOTAL_ITEMS = 5;
 const STEP_ANGLE = (2 * Math.PI) / TOTAL_ITEMS; // 72 degrees in radians
 
