@@ -207,7 +207,7 @@ users/{userId}
 ## Demo & Testing Script
 
 1. **Launch co-campus** — The app logs in anonymously behind the scenes and loads the HomeScreen.
-2. **Scan material** — Tap "Scan Notes" and choose Camera, Photos, or Files & PDFs.
+2. **Scan material** — Tap "Scan More" and choose Camera, Photos, or Files & PDFs.
 3. **Pipeline stages** — Monitor the loading states:
    - "Reading your notes..." (Vision API)
    - "Generating flashcards..." (LLM flashcard generation)

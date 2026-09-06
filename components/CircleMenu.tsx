@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     StyleSheet,
     View,
+    Text,
     TouchableOpacity,
     Animated,
     Platform,
@@ -282,6 +283,12 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
 
     const activeItem = items[activeIndexRef.current] || items[0];
 
+    // Dynamically calculate which item is currently at or closest to the apex
+    const rawApexIdx = -renderAngle / STEP_ANGLE;
+    let nearestApexIdx = Math.round(rawApexIdx) % TOTAL_ITEMS;
+    if (nearestApexIdx < 0) nearestApexIdx += TOTAL_ITEMS;
+    const focusedItem = items[nearestApexIdx] || activeItem;
+
     return (
         <>
             {/* 1. Small Translucent Ball at Bottom-Left when Collapsed */}
@@ -357,6 +364,11 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                 pointerEvents={isOpen ? 'box-none' : 'none'}
                 {...panResponder.panHandlers}
             >
+                {/* Dynamic Floating Label Badge for the active/focused item */}
+                <View style={styles.apexLabelBadge} pointerEvents="none">
+                    <Text style={styles.apexLabelText}>{focusedItem.label}</Text>
+                </View>
+
                 {/* Subtle Rotary Dial Guide Ring */}
                 <View style={styles.rotaryGuideTrack} pointerEvents="none" />
 
@@ -376,9 +388,10 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                     const distToApex = Math.abs(normAngle);
                     const isApex = distToApex < 0.38;
 
-                    // Smooth, continuous scaling curve (peaks at 1.28x at apex, drops to 0.82x)
-                    const scale = 0.82 + 0.46 * Math.max(0, 1 - distToApex / 0.85);
+                    // Medium scaling: scan node uses balanced medium curve (peaks at 1.15x instead of 1.28x)
                     const isScan = item.isAccent;
+                    const peakScale = isScan ? 0.33 : 0.46;
+                    const scale = 0.82 + peakScale * Math.max(0, 1 - distToApex / 0.85);
 
                     // Strictly only ONE item is ever marked as selected (fixes "stat app also selected" bug)
                     const currentActiveId = activeTabId || items[activeIndexRef.current]?.id;
@@ -418,7 +431,7 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                                             ? item.activeIcon
                                             : item.icon
                                     }
-                                    size={isScan ? 24 : isApex ? 22 : 19}
+                                    size={isScan ? (isApex ? 21 : 20) : isApex ? 22 : 19}
                                     color={
                                         isScan || isSelected
                                             ? '#ffffff'
@@ -564,8 +577,10 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         borderColor: 'rgba(255, 255, 255, 0.55)',
         shadowColor: '#10b981',
-        shadowOpacity: 0.48,
-        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.36,
+        shadowRadius: 7,
+        elevation: 5,
     },
     activeDot: {
         position: 'absolute',
@@ -574,5 +589,28 @@ const styles = StyleSheet.create({
         height: 4,
         borderRadius: 2,
         backgroundColor: '#22c55e',
+    },
+    apexLabelBadge: {
+        position: 'absolute',
+        top: -24,
+        alignSelf: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 3.5,
+        borderRadius: 12,
+        backgroundColor: 'rgba(15, 23, 42, 0.88)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.22)',
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.22,
+        shadowRadius: 6,
+        elevation: 4,
+        zIndex: 110,
+    },
+    apexLabelText: {
+        fontSize: 11.5,
+        fontWeight: '700',
+        color: '#ffffff',
+        letterSpacing: 0.3,
     },
 });

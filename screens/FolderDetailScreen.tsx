@@ -329,15 +329,15 @@ export const FolderDetailScreen: React.FC<FolderDetailScreenProps> = ({
                 </View>
             </ScrollView>
 
-            {/* Floating Sticky Action Button (Scan Note Directly Into Subject) */}
+            {/* Floating Sticky Action Button (Scan More Directly Into Subject) */}
             <View style={[styles.floatingScanContainer, { bottom: bottomPadding + 10 }]}>
                 <TouchableOpacity
                     style={styles.floatingScanBtn}
                     onPress={() => onScanNote(folder)}
                     activeOpacity={0.88}
                 >
-                    <Ionicons name="camera" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-                    <Text style={styles.floatingScanText}>Scan Note to {courseCode}</Text>
+                    <Ionicons name="camera" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.floatingScanText}>Scan More to {courseCode}</Text>
                 </TouchableOpacity>
             </View>
         </View>
@@ -777,23 +777,22 @@ const styles = StyleSheet.create({
     },
     floatingScanBtn: {
         backgroundColor: '#182232',
-        borderRadius: 26,
-        paddingVertical: 14,
-        paddingHorizontal: 24,
-        maxWidth: 520,
-        width: '100%',
+        borderRadius: 22,
+        paddingVertical: 10,
+        paddingHorizontal: 20,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#182232',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.25,
-        shadowRadius: 12,
-        elevation: 6,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.22,
+        shadowRadius: 8,
+        elevation: 5,
     },
     floatingScanText: {
         color: '#ffffff',
-        fontSize: 15,
+        fontSize: 13,
         fontWeight: '700',
+        letterSpacing: 0.2,
     },
 });

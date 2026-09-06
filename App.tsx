@@ -637,8 +637,8 @@ function MainApp() {
                     },
                     {
                         id: 'scan',
-                        label: 'Scan',
-                        icon: 'camera',
+                        label: 'Scan More',
+                        icon: 'camera-outline',
                         activeIcon: 'camera',
                         isAccent: true,
                         onPress: () => handleScanPress(null),
