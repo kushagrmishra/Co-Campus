@@ -32,6 +32,9 @@ export interface YouTubeVideo {
     title: string;
     thumbnail: string;
     channelTitle: string;
+    duration?: string;
+    views?: string;
+    description?: string;
 }
 
 export interface TopicVideoGroup {
@@ -48,6 +51,7 @@ export interface SavedNote {
     extraction: ExtractionData;
     flashcards: Flashcard[];
     topicVideos: TopicVideoGroup[];
+    imageUris?: string[];
 }
 
 export interface SubjectFolder {
@@ -55,4 +59,6 @@ export interface SubjectFolder {
     name: string;
     noteCount: number;
     updatedAt: number;
+    examTag?: string;
+    examDate?: string;
 }

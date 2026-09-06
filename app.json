@@ -1,37 +1,26 @@
 {
   "expo": {
-    "name": "Freebuff",
-    "slug": "freebuff-desktop",
+    "name": "cocampus",
+    "slug": "cocampus",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#121212"
-    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.freebuff.desktop"
+      "bundleIdentifier": "com.cocampus.app"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#121212"
       },
-      "package": "com.freebuff.desktop"
+      "package": "com.cocampus.app"
     },
     "web": {
       "bundler": "metro",
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [],
-    "extra": {
-      "eas": {
-        "projectId": "your-project-id"
-      }
-    }
+    "plugins": []
   }
 }

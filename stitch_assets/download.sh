@@ -1,0 +1,26 @@
+#!/bin/bash
+set -e
+
+DIR="/Users/kushagrmishra/Documents/cocampus/stitch_assets"
+
+echo "Downloading Screen 1: Smart Library & Subjects..."
+curl -L -s "https://lh3.googleusercontent.com/aida/AEtjO1XFmy7dVv7Y-6eQCuYVVgFmIa33w18LJGJGIKN_1pdGOFha30Nzi2pT4CaF5dPFYNfEtGzKI10puE1qojeIBG6CKYaheRvxqbCd2NGi2wCy2CWwJ8uty3vQ_EVm9zgKC7jmXaVhvHHJIC2o8PR8OBw3GRLZzkFd5EQKqCYtOx8ACwWSkdmy7xCfGlVV3Sq1TsdkZaXiayC6VicwQpKD2mPSv0BAbbzcAWVvjsM3hJCBe4y-lLqWCJjR48c" -o "$DIR/1_smart_library_subjects.png"
+curl -L -s "https://contribution.usercontent.google.com/download?c=CgthaWRhX2NvZGVmeBJ7Eh1hcHBfY29tcGFuaW9uX2dlbmVyYXRlZF9maWxlcxpaCiVodG1sXzAwMDY1YWMwNWJlNDZjMWEwNWYxMmIwN2FkMzk5ZDJkEgsSBxCp5vCrvwgYAZIBIwoKcHJvamVjdF9pZBIVQhMzMzA0MTkzMTQyMDMwODI1NzU5&filename=&opi=89354086" -o "$DIR/1_smart_library_subjects.html"
+
+echo "Downloading Screen 2: Structured Study Note..."
+curl -L -s "https://lh3.googleusercontent.com/aida/AEtjO1U_cMToXGapOEDi1i5Vs9SMW3SxL7CVRBk0VVjg6GbyvVqvLueAKajed8RMc_296chpipTIHka4_wpJhZhoGowmXYNXqTWWE7H0z_Ne4Hrc5bwrMcu6pp8Ne8q6ZeqlNXCR_gl_sqggFju3O0aERxKJ6bap7WBPiZiQETKF1yHknhUIOuVlpS7PHiDUGaOMVTrWI7ZxGxNe2pmfzJ3hIMSFFXo9wT5QmPSQ0OSkdMPgCxin-VjklYcOrw" -o "$DIR/2_structured_study_note.png"
+curl -L -s "https://contribution.usercontent.google.com/download?c=CgthaWRhX2NvZGVmeBJ7Eh1hcHBfY29tcGFuaW9uX2dlbmVyYXRlZF9maWxlcxpaCiVodG1sXzAwMDY1YWMwNWNhMTNhYjQwNDc5ZjI3ODdkMTY4ZDQzEgsSBxCp5vCrvwgYAZIBIwoKcHJvamVjdF9pZBIVQhMzMzA0MTkzMTQyMDMwODI1NzU5&filename=&opi=89354086" -o "$DIR/2_structured_study_note.html"
+
+echo "Downloading Screen 3: Capture Scanner..."
+curl -L -s "https://lh3.googleusercontent.com/aida/AEtjO1UQwiLOuAAJSoaDgnWNztzym_Qg7JO-WRGh6zj3p4YItVWteOJOuD1RxRkdxA1Fdr_sniRiEwlXt9sEhRzaU03oyZO0ULVLQ4JWbFgcepUfHqHjb0Y74gm8HGiAXPGptuSLfhxczSznJ1ONMQmpChyg-F62HzUpitKyNhMEwzuCls90oi79t1ISTVha54Ob89sJUlyPYB69jI2_KF8SPM-SbyRrLhKkxAzfx0STMV0y6oiyFCy6UyFmmPs" -o "$DIR/3_capture_scanner.png"
+curl -L -s "https://contribution.usercontent.google.com/download?c=CgthaWRhX2NvZGVmeBJ7Eh1hcHBfY29tcGFuaW9uX2dlbmVyYXRlZF9maWxlcxpaCiVodG1sXzAwMDY1YWMwNTY2NWNkZTgwMjNiZTZhMWFhMjJhMmI3EgsSBxCp5vCrvwgYAZIBIwoKcHJvamVjdF9pZBIVQhMzMzA0MTkzMTQyMDMwODI1NzU5&filename=&opi=89354086" -o "$DIR/3_capture_scanner.html"
+
+echo "Downloading Screen 4: Interactive Flashcards..."
+curl -L -s "https://lh3.googleusercontent.com/aida/AEtjO1UJfunSrFKw61fUMzFGZg7G3aR41kIZEIpQSnpb96CGDzEXLUSslXAt9hH0-FYy0XbNEHwZGd8nZvnPp82ikzgq6Kus3VONHU5IE4LXjfj0KYbCwWrcB5E7VxdAEvXif6JjBPs81JZOCmxx1bRlE2-ewCq7kixjksP_wOy_0a2lBvnOSUD2fEdfwQgUuZ5LRelMeJg0q6LQc2NR_U1uxGgM8u4NpOmXDpFRZhn9WWO99iwr6ZqFyHBTZpI" -o "$DIR/4_interactive_flashcards.png"
+curl -L -s "https://contribution.usercontent.google.com/download?c=CgthaWRhX2NvZGVmeBJ7Eh1hcHBfY29tcGFuaW9uX2dlbmVyYXRlZF9maWxlcxpaCiVodG1sXzAwMDY1YWMwNWM0MWQzMjAwNDc5ZjI3ODdkMTY4ZDQzEgsSBxCp5vCrvwgYAZIBIwoKcHJvamVjdF9pZBIVQhMzMzA0MTkzMTQyMDMwODI1NzU5&filename=&opi=89354086" -o "$DIR/4_interactive_flashcards.html"
+
+echo "Downloading Screen 5: Campus Copilot Logo..."
+curl -L -s "https://lh3.googleusercontent.com/aida/AEtjO1VmKOET_jT9bmGtsor9rqa2FhPLDLJx2zPkvnofirJPlMIp3_qdRSYIEZ0c9hXKw_coYAi5GlcIa6nrCNxOXVpH14Zch0RS9TqSP8eu9opW8iBWT6hvwQJmy_YL73YNXB78N2A7UOPO-tpTD9Yjqg0chzpu5lSj10AU9IrwD4wWtLzha1_q42Q1pQPwrCQ5BcMcl0goFFBakMYOqy4AqCesjunMBDMWQx_L9c0nWHPKp1BoBCuLgeN-3qs" -o "$DIR/5_campus_copilot_logo.png"
+curl -L -s "https://contribution.usercontent.google.com/download?c=CgthaWRhX2NvZGVmeBJ7Eh1hcHBfY29tcGFuaW9uX2dlbmVyYXRlZF9maWxlcxpaCiVodG1sXzAwMDY1YWMwNDdmMjk4M2UwNWYxMzkxNjU5MDJlMTYxEgsSBxCp5vCrvwgYAZIBIwoKcHJvamVjdF9pZBIVQhMzMzA0MTkzMTQyMDMwODI1NzU5&filename=&opi=89354086" -o "$DIR/5_campus_copilot_logo.svg"
+
+echo "All Stitch screen assets downloaded successfully!"

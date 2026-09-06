@@ -1,63 +1,1024 @@
-import React, { useState, useCallback } from 'react';
-import { StatusBar } from 'expo-status-bar';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import {
+    StyleSheet,
+    Text,
+    View,
+    TouchableOpacity,
+    StatusBar,
+    ActivityIndicator,
+    Platform,
+    PanResponder,
+    Animated,
+    Dimensions,
+} from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { HomeScreen } from './screens/Homescreen';
 import { CaptureScreen } from './screens/CaptureScreen';
 import { ResultsScreen } from './screens/ResultScreen';
-import { SavedNote } from './types';
+import { StudyScreen } from './screens/StudyScreen';
+import { LoginScreen, AUTH_STORAGE_KEY } from './screens/LoginScreen';
+import { AppSkeleton } from './components/AppSkeleton';
+import { SavedNote, SubjectFolder } from './types';
+import { fetchSubjectFolders, fetchAllLocalNotes, fetchNotesBySubject } from './services/storage';
 
-type Screen = 'home' | 'capture' | 'result';
+type BottomTab = 'folders' | 'notes' | 'study' | 'stats';
+type OverlayScreen = 'none' | 'capture' | 'result';
 
-export default function App() {
-    const [screen, setScreen] = useState<Screen>('home');
+interface TabItem {
+    id: BottomTab;
+    label: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    activeIcon: keyof typeof Ionicons.glyphMap;
+}
+
+const TABS: TabItem[] = [
+    { id: 'folders', label: 'Folders', icon: 'folder-outline', activeIcon: 'folder' },
+    { id: 'notes', label: 'Notes', icon: 'document-text-outline', activeIcon: 'document-text' },
+    { id: 'study', label: 'Study', icon: 'school-outline', activeIcon: 'school' },
+    { id: 'stats', label: 'Stats', icon: 'bar-chart-outline', activeIcon: 'bar-chart' },
+];
+
+function MainApp() {
+    const insets = useSafeAreaInsets();
+    const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+    const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+    const [currentTab, setCurrentTab] = useState<BottomTab>('folders');
+    const [overlay, setOverlay] = useState<OverlayScreen>('none');
+
     const [selectedNote, setSelectedNote] = useState<SavedNote | null>(null);
-    const [refreshKey, setRefreshKey] = useState(0);
+    const [targetFolder, setTargetFolder] = useState<SubjectFolder | null>(null);
+    const [appendNote, setAppendNote] = useState<SavedNote | null>(null);
 
-    const handleScanPress = useCallback(() => {
-        setScreen('capture');
+    const [allNotes, setAllNotes] = useState<SavedNote[]>([]);
+    const [folders, setFolders] = useState<SubjectFolder[]>([]);
+    const [refreshKey, setRefreshKey] = useState<number>(0);
+
+    // Navigation Bar Auto-Hide & Swipe Reveal States
+    const [isNavBarVisible, setIsNavBarVisible] = useState<boolean>(true);
+    const [activeToast, setActiveToast] = useState<{
+        label: string;
+        icon: keyof typeof Ionicons.glyphMap;
+    } | null>(null);
+
+    const navBarAnim = useRef(new Animated.Value(0)).current; // 0 = fully visible, 1 = hidden
+    const toastAnim = useRef(new Animated.Value(0)).current;
+    const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isNavBarVisibleRef = useRef<boolean>(true);
+    isNavBarVisibleRef.current = isNavBarVisible;
+
+    const currentTabRef = useRef<BottomTab>(currentTab);
+    currentTabRef.current = currentTab;
+
+    // Interactive Swipe & Animated Tab Physics
+    const dragX = useRef(new Animated.Value(0)).current;
+    const isAnimatingTabRef = useRef<boolean>(false);
+
+    // Smoothly hide nav bar after 30 seconds
+    const hideNavBar = useCallback(() => {
+        if (hideTimerRef.current) {
+            clearTimeout(hideTimerRef.current);
+            hideTimerRef.current = null;
+        }
+        Animated.timing(navBarAnim, {
+            toValue: 1,
+            duration: 350,
+            useNativeDriver: true,
+        }).start(() => {
+            setIsNavBarVisible(false);
+        });
+    }, [navBarAnim]);
+
+    // Start or reset 30-second countdown
+    const startHideTimer = useCallback(() => {
+        if (hideTimerRef.current) {
+            clearTimeout(hideTimerRef.current);
+        }
+        hideTimerRef.current = setTimeout(() => {
+            hideNavBar();
+        }, 30000); // 30 seconds
+    }, [hideNavBar]);
+
+    // Reappear nav bar and begin 30s timer
+    const revealNavBar = useCallback(() => {
+        setIsNavBarVisible(true);
+        Animated.spring(navBarAnim, {
+            toValue: 0,
+            bounciness: 4,
+            speed: 14,
+            useNativeDriver: true,
+        }).start();
+        startHideTimer();
+    }, [navBarAnim, startHideTimer]);
+
+    // Transient Tab Toast for visual swipe feedback
+    const showTabToast = useCallback(
+        (tabInfo: { label: string; icon: keyof typeof Ionicons.glyphMap }) => {
+            if (toastTimerRef.current) {
+                clearTimeout(toastTimerRef.current);
+            }
+            setActiveToast(tabInfo);
+            Animated.spring(toastAnim, {
+                toValue: 1,
+                bounciness: 6,
+                speed: 16,
+                useNativeDriver: true,
+            }).start();
+
+            toastTimerRef.current = setTimeout(() => {
+                Animated.timing(toastAnim, {
+                    toValue: 0,
+                    duration: 250,
+                    useNativeDriver: true,
+                }).start(() => {
+                    setActiveToast(null);
+                });
+            }, 1400);
+        },
+        [toastAnim]
+    );
+
+    // Animated Tab Switcher with directional slide & spring physics
+    const animateToTab = useCallback(
+        (targetTab: BottomTab, direction?: 'forward' | 'backward') => {
+            const cur = currentTabRef.current;
+            if (targetTab === cur) {
+                revealNavBar();
+                Animated.spring(dragX, {
+                    toValue: 0,
+                    bounciness: 4,
+                    speed: 18,
+                    useNativeDriver: true,
+                }).start();
+                return;
+            }
+
+            const curIdx = TABS.findIndex((t) => t.id === cur);
+            const targetIdx = TABS.findIndex((t) => t.id === targetTab);
+            const dir = direction || (targetIdx > curIdx ? 'forward' : 'backward');
+
+            const screenWidth = Dimensions.get('window').width;
+            const exitX = dir === 'forward' ? -screenWidth * 0.42 : screenWidth * 0.42;
+            const enterX = dir === 'forward' ? screenWidth * 0.38 : -screenWidth * 0.38;
+
+            isAnimatingTabRef.current = true;
+
+            // 1. Slide out current tab
+            Animated.timing(dragX, {
+                toValue: exitX,
+                duration: 160,
+                useNativeDriver: true,
+            }).start(() => {
+                // 2. Switch tab
+                setCurrentTab(targetTab);
+                revealNavBar();
+                const tabInfo = TABS.find((t) => t.id === targetTab);
+                if (tabInfo) {
+                    showTabToast(tabInfo);
+                }
+
+                // 3. Position new tab entering from opposing side
+                dragX.setValue(enterX);
+
+                // 4. Spring smoothly into center
+                Animated.spring(dragX, {
+                    toValue: 0,
+                    bounciness: 4,
+                    speed: 16,
+                    useNativeDriver: true,
+                }).start(() => {
+                    isAnimatingTabRef.current = false;
+                });
+            });
+        },
+        [dragX, revealNavBar, showTabToast]
+    );
+
+    const handleSelectTab = useCallback(
+        (tab: BottomTab) => {
+            animateToTab(tab);
+        },
+        [animateToTab]
+    );
+
+    const handleSwipeNext = useCallback(() => {
+        const cur = currentTabRef.current;
+        const idx = TABS.findIndex((t) => t.id === cur);
+        if (idx < TABS.length - 1) {
+            animateToTab(TABS[idx + 1].id, 'forward');
+        } else {
+            // Elastic boundary bounce
+            Animated.spring(dragX, {
+                toValue: 0,
+                bounciness: 8,
+                speed: 18,
+                useNativeDriver: true,
+            }).start();
+        }
+    }, [animateToTab, dragX]);
+
+    const handleSwipePrev = useCallback(() => {
+        const cur = currentTabRef.current;
+        const idx = TABS.findIndex((t) => t.id === cur);
+        if (idx > 0) {
+            animateToTab(TABS[idx - 1].id, 'backward');
+        } else {
+            // Elastic boundary bounce
+            Animated.spring(dragX, {
+                toValue: 0,
+                bounciness: 8,
+                speed: 18,
+                useNativeDriver: true,
+            }).start();
+        }
+    }, [animateToTab, dragX]);
+
+    // PanResponder for Main Screen: tracks horizontal drag and animates tab slide
+    const screenPanResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => false,
+            onStartShouldSetPanResponderCapture: () => false,
+            onMoveShouldSetPanResponderCapture: () => false,
+            onMoveShouldSetPanResponder: (evt, gestureState) => {
+                if (isAnimatingTabRef.current) return false;
+
+                // 1. Horizontal swipe across tabs (ensure dominant horizontal intent)
+                const isHorizontalSwipe =
+                    Math.abs(gestureState.dx) > 28 &&
+                    Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 2.0;
+                if (isHorizontalSwipe) return true;
+
+                // 2. Swiping up from bottom when nav bar is hidden
+                if (!isNavBarVisibleRef.current) {
+                    const screenHeight = Dimensions.get('window').height;
+                    const startY = gestureState.y0 || evt.nativeEvent.pageY;
+                    if (startY > screenHeight * 0.6 && gestureState.dy < -15) {
+                        return true;
+                    }
+                }
+
+                return false;
+            },
+            onPanResponderGrant: () => {
+                dragX.stopAnimation();
+            },
+            onPanResponderMove: (_evt, gestureState) => {
+                if (isAnimatingTabRef.current) return;
+
+                // Move content with touch if horizontal swipe is active
+                if (Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.5) {
+                    const cur = currentTabRef.current;
+                    const idx = TABS.findIndex((t) => t.id === cur);
+                    let dx = gestureState.dx;
+
+                    // Rubber band resistance when at the first tab dragging right or last tab dragging left
+                    if ((idx === 0 && dx > 0) || (idx === TABS.length - 1 && dx < 0)) {
+                        dx = dx * 0.28;
+                    } else {
+                        dx = dx * 0.85;
+                    }
+
+                    dragX.setValue(dx);
+                }
+            },
+            onPanResponderRelease: (evt, gestureState) => {
+                if (isAnimatingTabRef.current) return;
+
+                // Check if swiped up from bottom when nav bar is hidden
+                if (!isNavBarVisibleRef.current) {
+                    const screenHeight = Dimensions.get('window').height;
+                    const startY = gestureState.y0 || evt.nativeEvent.pageY;
+                    if (
+                        (startY > screenHeight * 0.55 || gestureState.moveY > screenHeight * 0.6) &&
+                        gestureState.dy < -15
+                    ) {
+                        revealNavBar();
+                        Animated.spring(dragX, { toValue: 0, speed: 20, useNativeDriver: true }).start();
+                        return;
+                    }
+                }
+
+                // Check for horizontal tab navigation swipe
+                const isHorizontal =
+                    Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.4;
+                const passedThreshold =
+                    Math.abs(gestureState.dx) > 42 || Math.abs(gestureState.vx) > 0.35;
+
+                if (isHorizontal && passedThreshold) {
+                    if (gestureState.dx < 0) {
+                        handleSwipeNext();
+                    } else {
+                        handleSwipePrev();
+                    }
+                } else {
+                    // Did not pass swipe threshold -> spring back smoothly to center
+                    Animated.spring(dragX, {
+                        toValue: 0,
+                        bounciness: 6,
+                        speed: 20,
+                        useNativeDriver: true,
+                    }).start();
+                }
+            },
+            onPanResponderTerminate: () => {
+                Animated.spring(dragX, {
+                    toValue: 0,
+                    bounciness: 6,
+                    speed: 20,
+                    useNativeDriver: true,
+                }).start();
+            },
+        })
+    ).current;
+
+    // PanResponder on the Nav Bar itself: swipe down to dismiss early, swipe left/right to change tab
+    const navBarPanResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => false,
+            onMoveShouldSetPanResponder: (_evt, gestureState) => {
+                if (gestureState.dy > 15 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx)) {
+                    return true;
+                }
+                if (Math.abs(gestureState.dx) > 25 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy)) {
+                    return true;
+                }
+                return false;
+            },
+            onPanResponderRelease: (_evt, gestureState) => {
+                if (gestureState.dy > 20) {
+                    hideNavBar();
+                } else if (gestureState.dx < -30) {
+                    handleSwipeNext();
+                } else if (gestureState.dx > 30) {
+                    handleSwipePrev();
+                }
+            },
+        })
+    ).current;
+
+    // Dedicated PanResponder on bottom reveal handle
+    const bottomRevealPanResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponder: () => true,
+            onPanResponderRelease: () => {
+                revealNavBar();
+            },
+        })
+    ).current;
+
+    const navBarTranslateY = navBarAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, 115 + insets.bottom],
+    });
+
+    const revealHandleOpacity = navBarAnim.interpolate({
+        inputRange: [0, 0.6, 1],
+        outputRange: [0, 0.2, 1],
+    });
+
+    const revealHandleTranslateY = navBarAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [24, 0],
+    });
+
+    useEffect(() => {
+        if (isLoggedIn && overlay === 'none') {
+            revealNavBar();
+        }
+        return () => {
+            if (hideTimerRef.current) {
+                clearTimeout(hideTimerRef.current);
+            }
+            if (toastTimerRef.current) {
+                clearTimeout(toastTimerRef.current);
+            }
+        };
+    }, [isLoggedIn, overlay, revealNavBar]);
+
+    // Check login session with realistic skeleton pre-load
+    useEffect(() => {
+        async function checkAuth() {
+            try {
+                const [user] = await Promise.all([
+                    AsyncStorage.getItem(AUTH_STORAGE_KEY),
+                    // Display collegiate skeleton loader before resolving initial login state
+                    new Promise((resolve) => setTimeout(resolve, 850)),
+                ]);
+                setIsLoggedIn(user === 'kushagr');
+            } catch {
+                setIsLoggedIn(false);
+            }
+        }
+        checkAuth();
+    }, []);
+
+    // Refresh all notes for Study screen and Library
+    const loadAllNotes = useCallback(async () => {
+        try {
+            const fetchedFolders = await fetchSubjectFolders();
+            setFolders(fetchedFolders);
+
+            const notesList = await fetchAllLocalNotes();
+            setAllNotes(notesList);
+        } catch (err) {
+            console.error('Failed to load notes for app:', err);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (isLoggedIn) {
+            loadAllNotes();
+        }
+    }, [isLoggedIn, loadAllNotes, refreshKey]);
+
+    const handleScanPress = useCallback((folder?: SubjectFolder | null) => {
+        setTargetFolder(folder || null);
+        setAppendNote(null);
+        setOverlay('capture');
+    }, []);
+
+    const handleAddMorePages = useCallback((note: SavedNote) => {
+        setAppendNote(note);
+        setTargetFolder({
+            id: note.subjectSlug,
+            name: note.subject,
+            noteCount: 1,
+            updatedAt: Date.now(),
+        });
+        setOverlay('capture');
     }, []);
 
     const handleCaptureComplete = useCallback((note: SavedNote) => {
         setSelectedNote(note);
-        setScreen('result');
+        setAppendNote(null);
+        setOverlay('result');
         setRefreshKey((k) => k + 1);
     }, []);
 
     const handleCaptureCancel = useCallback(() => {
-        setScreen('home');
-    }, []);
+        if (appendNote && selectedNote) {
+            setOverlay('result');
+        } else {
+            setOverlay('none');
+        }
+        setAppendNote(null);
+    }, [appendNote, selectedNote]);
 
     const handleSelectNote = useCallback((note: SavedNote) => {
         setSelectedNote(note);
-        setScreen('result');
+        setOverlay('result');
     }, []);
 
     const handleBackFromResult = useCallback(() => {
         setSelectedNote(null);
-        setScreen('home');
+        setOverlay('none');
     }, []);
 
+    const handleStartQuiz = useCallback((note: SavedNote) => {
+        setSelectedNote(null);
+        setOverlay('none');
+        setCurrentTab('study');
+    }, []);
+
+    const handleLoginSuccess = useCallback(async (_username: string) => {
+        setIsLoggingIn(true);
+        try {
+            await loadAllNotes();
+        } catch (e) {
+            console.warn(e);
+        }
+        // Smooth hydration transition with skeleton
+        setTimeout(() => {
+            setIsLoggedIn(true);
+            setIsLoggingIn(false);
+        }, 700);
+    }, [loadAllNotes]);
+
+    // Checking authentication state or completing login -> Render Collegiate Skeleton Loader
+    if (isLoggedIn === null || isLoggingIn) {
+        return <AppSkeleton />;
+    }
+
+    // Unauthenticated -> Render Collegiate Login Screen
+    if (!isLoggedIn) {
+        return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+    }
+
+    // Fullscreen Overlays (Capture & Note Viewer)
+    if (overlay === 'capture') {
+        return (
+            <CaptureScreen
+                targetFolder={targetFolder}
+                appendNote={appendNote}
+                onCancel={handleCaptureCancel}
+                onComplete={handleCaptureComplete}
+            />
+        );
+    }
+
+    if (overlay === 'result' && selectedNote) {
+        return (
+            <ResultsScreen
+                note={selectedNote}
+                onBack={handleBackFromResult}
+                onAddMorePages={handleAddMorePages}
+                onStartQuiz={handleStartQuiz}
+            />
+        );
+    }
+
+    const screenWidth = Dimensions.get('window').width;
+
     return (
-        <>
-            <StatusBar style="light" backgroundColor="#121212" />
-            {screen === 'home' && (
-                <HomeScreen
-                    key={refreshKey}
-                    onScanPress={handleScanPress}
-                    onSelectNote={handleSelectNote}
-                />
+        <View style={styles.appContainer} onTouchStart={revealNavBar}>
+            <StatusBar barStyle="dark-content" backgroundColor="#faf9f6" />
+
+            {/* Active Tab Screen Content with Animated Swipe Gestures */}
+            <Animated.View
+                style={[
+                    styles.tabContent,
+                    {
+                        transform: [{ translateX: dragX }],
+                        opacity: dragX.interpolate({
+                            inputRange: [-screenWidth * 0.45, 0, screenWidth * 0.45],
+                            outputRange: [0.84, 1, 0.84],
+                            extrapolate: 'clamp',
+                        }),
+                    },
+                ]}
+                {...screenPanResponder.panHandlers}
+            >
+                {currentTab === 'folders' && (
+                    <HomeScreen
+                        key={`home_${refreshKey}`}
+                        onScanPress={handleScanPress}
+                        onSelectNote={handleSelectNote}
+                        onQuickReviewPress={() => handleSelectTab('study')}
+                        initialFolder={targetFolder}
+                    />
+                )}
+
+                {currentTab === 'notes' && (
+                    <HomeScreen
+                        key={`notes_${refreshKey}`}
+                        onScanPress={handleScanPress}
+                        onSelectNote={handleSelectNote}
+                        onQuickReviewPress={() => handleSelectTab('study')}
+                        initialSection="notes"
+                    />
+                )}
+
+                {currentTab === 'study' && (
+                    <StudyScreen
+                        notes={allNotes}
+                        folders={folders}
+                        onStartReview={() => {}}
+                        onSelectNote={handleSelectNote}
+                    />
+                )}
+
+                {currentTab === 'stats' && (
+                    <View
+                        style={[
+                            styles.statsContainer,
+                            {
+                                paddingTop: Platform.OS === 'android' ? Math.max(insets.top, StatusBar.currentHeight || 0, 16) : Math.max(insets.top, 16),
+                                paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 20 : 16),
+                            },
+                        ]}
+                    >
+                        <View style={styles.statsInnerMax}>
+                            <View style={styles.statsHeader}>
+                                <Text style={styles.statsBrandTitle}>cocampus</Text>
+                                <Text style={styles.statsHeading}>Academic Analytics</Text>
+                                <Text style={styles.statsSub}>Track memory consolidation & retention</Text>
+                            </View>
+
+                            <View style={styles.statsCardsRow}>
+                                <View style={styles.statMetricCard}>
+                                    <Text style={styles.statMetricNumber}>84%</Text>
+                                    <Text style={styles.statMetricLabel}>Retention Rate</Text>
+                                </View>
+                                <View style={styles.statMetricCard}>
+                                    <Text style={styles.statMetricNumber}>5 Days</Text>
+                                    <Text style={styles.statMetricLabel}>Calm Streak</Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.statsDetailCard}>
+                                <Text style={styles.statsDetailTitle}>Weekly Study Volume</Text>
+                                <Text style={styles.statsDetailDesc}>
+                                    48 flashcards reviewed this week across your active subject folders.
+                                </Text>
+                                <TouchableOpacity
+                                    style={styles.statsReviewBtn}
+                                    onPress={() => handleSelectTab('study')}
+                                >
+                                    <Text style={styles.statsReviewBtnText}>Jump into Active Recall</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                )}
+            </Animated.View>
+
+            {/* Transient Swipe Tab Indicator Toast */}
+            {activeToast && (
+                <Animated.View
+                    style={[
+                        styles.tabToastPill,
+                        {
+                            top: (Platform.OS === 'android' ? Math.max(insets.top, StatusBar.currentHeight || 0, 16) : Math.max(insets.top, 12)) + 52,
+                            opacity: toastAnim,
+                            transform: [
+                                {
+                                    translateY: toastAnim.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [-10, 0],
+                                    }),
+                                },
+                                {
+                                    scale: toastAnim.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [0.92, 1],
+                                    }),
+                                },
+                            ],
+                        },
+                    ]}
+                    pointerEvents="none"
+                >
+                    <Ionicons name={activeToast.icon} size={15} color="#4b6456" style={{ marginRight: 6 }} />
+                    <Text style={styles.tabToastText}>{activeToast.label}</Text>
+                </Animated.View>
             )}
-            {screen === 'capture' && (
-                <CaptureScreen
-                    onCancel={handleCaptureCancel}
-                    onComplete={handleCaptureComplete}
-                />
-            )}
-            {screen === 'result' && selectedNote && (
-                <ResultsScreen
-                    note={selectedNote}
-                    onBack={handleBackFromResult}
-                />
-            )}
-        </>
+
+            {/* Animated Bottom Navigation Bar (Auto-hides after 30s) */}
+            <Animated.View
+                style={[
+                    styles.navBarContainer,
+                    {
+                        paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 10 : 8),
+                        transform: [{ translateY: navBarTranslateY }],
+                    },
+                ]}
+                {...navBarPanResponder.panHandlers}
+            >
+                <View style={styles.navBar}>
+                    {/* Folders Tab */}
+                    <TouchableOpacity
+                        style={styles.navItem}
+                        onPress={() => handleSelectTab('folders')}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons
+                            name={currentTab === 'folders' ? 'folder' : 'folder-outline'}
+                            size={22}
+                            color={currentTab === 'folders' ? '#182232' : '#75777d'}
+                        />
+                        <Text
+                            style={[
+                                styles.navLabel,
+                                currentTab === 'folders' && styles.navLabelActive,
+                            ]}
+                        >
+                            Folders
+                        </Text>
+                    </TouchableOpacity>
+
+                    {/* Notes Tab */}
+                    <TouchableOpacity
+                        style={styles.navItem}
+                        onPress={() => handleSelectTab('notes')}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons
+                            name={currentTab === 'notes' ? 'document-text' : 'document-text-outline'}
+                            size={22}
+                            color={currentTab === 'notes' ? '#182232' : '#75777d'}
+                        />
+                        <Text
+                            style={[
+                                styles.navLabel,
+                                currentTab === 'notes' && styles.navLabelActive,
+                            ]}
+                        >
+                            Notes
+                        </Text>
+                    </TouchableOpacity>
+
+                    {/* Elevated Center Shutter Button (Scan) */}
+                    <View style={styles.centerScanWrap}>
+                        <TouchableOpacity
+                            style={styles.centerScanBtn}
+                            onPress={() => handleScanPress(null)}
+                            activeOpacity={0.85}
+                        >
+                            <Ionicons name="camera" size={24} color="#ffffff" />
+                        </TouchableOpacity>
+                        <Text style={styles.centerScanLabel}>Scan</Text>
+                    </View>
+
+                    {/* Study Tab */}
+                    <TouchableOpacity
+                        style={styles.navItem}
+                        onPress={() => handleSelectTab('study')}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons
+                            name={currentTab === 'study' ? 'school' : 'school-outline'}
+                            size={22}
+                            color={currentTab === 'study' ? '#182232' : '#75777d'}
+                        />
+                        <Text
+                            style={[
+                                styles.navLabel,
+                                currentTab === 'study' && styles.navLabelActive,
+                            ]}
+                        >
+                            Study
+                        </Text>
+                    </TouchableOpacity>
+
+                    {/* Stats Tab */}
+                    <TouchableOpacity
+                        style={styles.navItem}
+                        onPress={() => handleSelectTab('stats')}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons
+                            name={currentTab === 'stats' ? 'bar-chart' : 'bar-chart-outline'}
+                            size={22}
+                            color={currentTab === 'stats' ? '#182232' : '#75777d'}
+                        />
+                        <Text
+                            style={[
+                                styles.navLabel,
+                                currentTab === 'stats' && styles.navLabelActive,
+                            ]}
+                        >
+                            Stats
+                        </Text>
+                    </TouchableOpacity>
+                </View>
+            </Animated.View>
+
+            {/* Bottom Reveal Handle (Swipe up or tap to reveal hidden nav bar) */}
+            <Animated.View
+                style={[
+                    styles.bottomRevealContainer,
+                    {
+                        bottom: Math.max(insets.bottom, Platform.OS === 'android' ? 10 : 8) + 4,
+                        opacity: revealHandleOpacity,
+                        transform: [{ translateY: revealHandleTranslateY }],
+                    },
+                ]}
+                pointerEvents={isNavBarVisible ? 'none' : 'auto'}
+                {...bottomRevealPanResponder.panHandlers}
+            >
+                <TouchableOpacity
+                    style={styles.bottomRevealBtn}
+                    onPress={revealNavBar}
+                    activeOpacity={0.85}
+                >
+                    <Ionicons name="chevron-up" size={13} color="#182232" style={{ marginRight: 4 }} />
+                    <Text style={styles.bottomRevealText}>Swipe up for menu</Text>
+                </TouchableOpacity>
+            </Animated.View>
+        </View>
     );
 }
+
+export default function App() {
+    return (
+        <SafeAreaProvider>
+            <MainApp />
+        </SafeAreaProvider>
+    );
+}
+
+const styles = StyleSheet.create({
+    loadingContainer: {
+        flex: 1,
+        backgroundColor: '#faf9f6',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    appContainer: {
+        flex: 1,
+        backgroundColor: '#faf9f6',
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    tabContent: {
+        flex: 1,
+    },
+    navBarContainer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: '#ffffff',
+        borderTopWidth: 1,
+        borderTopColor: '#efeeeb',
+        zIndex: 100,
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 8,
+    },
+    bottomRevealContainer: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 90,
+    },
+    bottomRevealBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 16,
+        paddingVertical: 7,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#e9e8e5',
+        shadowColor: '#182232',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.12,
+        shadowRadius: 6,
+        elevation: 4,
+    },
+    bottomRevealText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#182232',
+        letterSpacing: 0.2,
+    },
+    tabToastPill: {
+        position: 'absolute',
+        alignSelf: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 22,
+        borderWidth: 1,
+        borderColor: '#e9e8e5',
+        shadowColor: '#182232',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.12,
+        shadowRadius: 8,
+        elevation: 6,
+        zIndex: 200,
+    },
+    tabToastText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#182232',
+    },
+    navBar: {
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        justifyContent: 'space-around',
+        paddingHorizontal: 8,
+        paddingTop: 6,
+        paddingBottom: 4,
+        position: 'relative',
+        maxWidth: 880,
+        width: '100%',
+        alignSelf: 'center',
+    },
+    navItem: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 4,
+        flex: 1,
+    },
+    navLabel: {
+        fontSize: 10,
+        fontWeight: '600',
+        color: '#75777d',
+        marginTop: 3,
+    },
+    navLabelActive: {
+        color: '#182232',
+        fontWeight: '700',
+    },
+    centerScanWrap: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        flex: 1,
+        top: -14,
+    },
+    centerScanBtn: {
+        width: 54,
+        height: 54,
+        borderRadius: 27,
+        backgroundColor: '#182232',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#182232',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 6,
+    },
+    centerScanLabel: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: '#182232',
+        marginTop: 4,
+    },
+    statsContainer: {
+        flex: 1,
+        backgroundColor: '#faf9f6',
+        paddingHorizontal: 20,
+    },
+    statsInnerMax: {
+        maxWidth: 880,
+        width: '100%',
+        alignSelf: 'center',
+        flex: 1,
+    },
+    statsHeader: {
+        marginBottom: 24,
+    },
+    statsBrandTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#182232',
+        marginBottom: 6,
+    },
+    statsHeading: {
+        fontSize: 26,
+        fontWeight: '800',
+        color: '#182232',
+        letterSpacing: -0.5,
+    },
+    statsSub: {
+        fontSize: 14,
+        color: '#75777d',
+        marginTop: 4,
+    },
+    statsCardsRow: {
+        flexDirection: 'row',
+        gap: 12,
+        marginBottom: 20,
+    },
+    statMetricCard: {
+        flex: 1,
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        padding: 18,
+        borderWidth: 1,
+        borderColor: '#e8e6e1',
+    },
+    statMetricNumber: {
+        fontSize: 28,
+        fontWeight: '800',
+        color: '#182232',
+    },
+    statMetricLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#75777d',
+        marginTop: 4,
+    },
+    statsDetailCard: {
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        padding: 18,
+        borderWidth: 1,
+        borderColor: '#e8e6e1',
+    },
+    statsDetailTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#182232',
+        marginBottom: 6,
+    },
+    statsDetailDesc: {
+        fontSize: 13,
+        color: '#45474c',
+        lineHeight: 19,
+        marginBottom: 16,
+    },
+    statsReviewBtn: {
+        backgroundColor: '#182232',
+        paddingVertical: 12,
+        borderRadius: 10,
+        alignItems: 'center',
+    },
+    statsReviewBtnText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#ffffff',
+    },
+});

@@ -22,17 +22,17 @@ co-campus is a React Native / Expo (TypeScript) mobile application designed to s
 
 ## Key Features
 
-- **Multi-Format Input** — Capture study material using the device camera, photo gallery, or upload PDF files and documents directly.
-- **AI Vision Extraction** — Uses GPT-4o-mini vision capabilities to parse notes into a strictly structured JSON schema containing:
-  - A 150–300 word cohesive study summary
-  - Categorized topic breakdowns with bulleted concepts
-  - Actionable tasks with detected due dates
-  - Best-effort OCR text transcripts
-- **Automated Flashcard Generation** — Generates approximately 8 high-yield question-and-answer study cards per set for self-testing.
-- **Targeted YouTube Video Search** — Queries YouTube Data API v3 (`search.list`) for the top 3 relevant explainer videos per extracted topic.
-- **Smart Auto-Foldering** — Automatically infers the academic subject (e.g., Calculus II, Data Structures) and groups notes into subject folders without manual organization.
-- **Zero Re-Fetch Persistence** — Saves extracted notes, flashcards, and video recommendations in Firebase Firestore under anonymous user IDs. Reopening saved notes loads instantly from cache with zero redundant API calls.
-- **Modern Dark UI** — Clean dark interface built with custom React Native primitives.
+- **Collegiate Authentication** — Secure login gateway (`kushagr` / `user1`) with persistent offline session caching via AsyncStorage.
+- **Pre-Login Academic Skeleton Loader** — Shimmering pulse skeleton screen showing placeholder app structure before login and during note hydration.
+- **Smart Subject Folders & Exam Tracking** — Group notes into folders with countdown badges (`Exam in X days`), syllabus document/image uploads, and AI exam date extraction.
+- **Physics-Based Animated Tab Swipe** — Interactive finger-following drag physics with rubber-band boundaries, directional slide transitions (`Folders` ⟷ `Notes` ⟷ `Study` ⟷ `Stats`), and transient tab toasts.
+- **30-Second Auto-Hiding Navigation Bar** — Automatically hides bottom nav after 30 seconds of inactivity; swipe up or tap the indicator pill to instantly restore it.
+- **Active Recall Study Deck** — 10+ interactive tap-to-flip flashcards with difficulty level setter (All / Easy / Medium / Hard) and progress tracking.
+- **Interactive Quiz & MCQ Maker** — Dynamic multiple-choice questions with answer verification, explanations, and score tracking.
+- **Lecture Note Audio Reader** — Listen to structured lecture notes and key takeaways hands-free with speech synthesis.
+- **AI Vision Extraction** — Uses GPT-4o-mini vision to parse whiteboard notes, printed slides, and PDFs into structured summaries, topics, and tasks.
+- **Curated & Live YouTube Explainer Videos** — Targeted video lecture clips with automatic academic fallback support.
+- **Universal Multi-Device Layout** — Strict safe-area spacing and responsive padding across iPhone 11, iPhone 15 Pro (Dynamic Island), and Android devices. Zero raw emojis.
 
 ---
 
@@ -41,9 +41,10 @@ co-campus is a React Native / Expo (TypeScript) mobile application designed to s
 | Category | Technology |
 |---|---|
 | Mobile Framework | React Native, Expo SDK 51, TypeScript |
-| State & Data Layer | Firebase Firestore, Firebase Anonymous Auth, Async Storage |
+| UI & Vector Icons | `@expo/vector-icons` (`Ionicons`), Animated API, PanResponder |
+| State & Persistence | AsyncStorage, Firebase Firestore, React Hooks |
 | AI & Integration APIs | OpenAI Chat Completions API (`gpt-4o-mini`), YouTube Data API v3 |
-| Native Utilities | `expo-image-picker`, `expo-document-picker`, `expo-file-system` |
+| Audio & Media | `expo-speech`, `expo-image-picker`, `expo-document-picker`, `expo-file-system` |
 
 ---
 
@@ -51,20 +52,25 @@ co-campus is a React Native / Expo (TypeScript) mobile application designed to s
 
 ```text
 co-campus/
-├── .env                     # Local environment variables (git-ignored)
-├── assets/                  # App icons, splash screens, and images
-├── services/                # Core business logic and API integrations
-│   ├── firebase.ts          # Firebase Auth & Firestore initialization
-│   ├── storage.ts           # Firestore helper functions & slugification logic
-│   ├── llm.ts               # Vision OCR & flashcard generation pipeline
-│   └── youtube.ts           # YouTube Data API v3 client
-├── screens/                 # Application screen components
-│   ├── HomeScreen.tsx       # Subject folders & saved notes dashboard
-│   ├── CaptureScreen.tsx    # Camera, photo, and PDF picker pipeline
-│   └── ResultsScreen.tsx    # 5-tab study material viewer
-├── types/                   # Strict TypeScript type definitions
+├── .env                          # Local environment variables (git-ignored)
+├── assets/                       # App icons, splash screens, and images
+├── components/                   # Reusable UI components
+│   └── AppSkeleton.tsx           # Collegiate shimmer skeleton loading screen
+├── services/                     # Core business logic and API integrations
+│   ├── firebase.ts               # Firebase Auth & Firestore initialization
+│   ├── storage.ts                # Local storage & note management
+│   ├── llm.ts                    # Vision OCR & flashcard generation pipeline
+│   └── youtube.ts                # YouTube Data API client & curated lecture clips
+├── screens/                      # Application screen components
+│   ├── LoginScreen.tsx           # Collegiate authentication screen
+│   ├── Homescreen.tsx            # Subject folders, syllabus upload, and notes dashboard
+│   ├── FolderDetailScreen.tsx    # Single folder view with exam dates and syllabus scanner
+│   ├── StudyScreen.tsx           # Active recall 10+ flashcards & MCQ quiz maker
+│   ├── CaptureScreen.tsx         # Camera, photo, and PDF picker pipeline
+│   └── ResultScreen.tsx          # 5-tab study material viewer with audio playback
+├── types/                        # Strict TypeScript type definitions
 │   └── index.ts
-├── App.tsx                  # Root entry point and screen routing
+├── App.tsx                       # Root entry point, animated swipe physics, auto-hiding nav
 ├── package.json
 └── README.md
 ```
