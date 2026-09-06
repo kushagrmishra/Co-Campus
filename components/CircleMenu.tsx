@@ -77,6 +77,7 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
 
     // 15-second auto-collapse timer
     const autoCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const navCollapseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isOpenRef = useRef<boolean>(isOpen);
     isOpenRef.current = isOpen;
 
@@ -84,6 +85,10 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
         if (autoCollapseTimerRef.current) {
             clearTimeout(autoCollapseTimerRef.current);
             autoCollapseTimerRef.current = null;
+        }
+        if (navCollapseTimeoutRef.current) {
+            clearTimeout(navCollapseTimeoutRef.current);
+            navCollapseTimeoutRef.current = null;
         }
     }, []);
 
@@ -94,13 +99,13 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
         Animated.parallel([
             Animated.timing(openAnim, {
                 toValue: 0,
-                duration: 220,
+                duration: 200,
                 useNativeDriver: true,
             }),
             Animated.spring(ballAnim, {
                 toValue: 1,
                 bounciness: 6,
-                speed: 16,
+                speed: 18,
                 useNativeDriver: true,
             }),
         ]).start(() => {
@@ -189,9 +194,17 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
             // Immediately trigger press so screen transition occurs synchronously with dial rotation
             if (shouldTriggerPress) {
                 items[boundedIndex]?.onPress();
+
+                // Collapse nav bar as soon as user scrolls/navigates to an app
+                if (navCollapseTimeoutRef.current) {
+                    clearTimeout(navCollapseTimeoutRef.current);
+                }
+                navCollapseTimeoutRef.current = setTimeout(() => {
+                    closeMenu();
+                }, 80);
             }
         },
-        [items, resetCollapseTimer, rotationAngle]
+        [closeMenu, items, resetCollapseTimer, rotationAngle]
     );
 
     // Sync rotation on external active tab change (e.g., swipe navigation)
@@ -317,8 +330,9 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                         styles.ballButton,
                         Platform.OS === 'web'
                             ? ({
-                                  backdropFilter: 'blur(16px)',
-                                  WebkitBackdropFilter: 'blur(16px)',
+                                  backdropFilter: 'blur(24px)',
+                                  WebkitBackdropFilter: 'blur(24px)',
+                                  boxShadow: '0 8px 24px -4px rgba(15, 23, 42, 0.35), 0 2px 6px rgba(0, 0, 0, 0.1)',
                               } as any)
                             : undefined,
                     ]}
@@ -356,8 +370,8 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                     },
                     Platform.OS === 'web'
                         ? ({
-                              filter: 'url(#shadowed-goo)',
-                              WebkitFilter: 'url(#shadowed-goo)',
+                              WebkitFontSmoothing: 'antialiased',
+                              MozOsxFontSmoothing: 'grayscale',
                           } as any)
                         : undefined,
                 ]}
@@ -365,12 +379,36 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                 {...panResponder.panHandlers}
             >
                 {/* Dynamic Floating Label Badge for the active/focused item */}
-                <View style={styles.apexLabelBadge} pointerEvents="none">
+                <View
+                    style={[
+                        styles.apexLabelBadge,
+                        Platform.OS === 'web'
+                            ? ({
+                                  backdropFilter: 'blur(24px)',
+                                  WebkitBackdropFilter: 'blur(24px)',
+                                  boxShadow: '0 4px 16px rgba(15, 23, 42, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.25)',
+                              } as any)
+                            : undefined,
+                    ]}
+                    pointerEvents="none"
+                >
                     <Text style={styles.apexLabelText}>{focusedItem.label}</Text>
                 </View>
 
                 {/* Subtle Rotary Dial Guide Ring */}
-                <View style={styles.rotaryGuideTrack} pointerEvents="none" />
+                <View
+                    style={[
+                        styles.rotaryGuideTrack,
+                        Platform.OS === 'web'
+                            ? ({
+                                  backdropFilter: 'blur(20px)',
+                                  WebkitBackdropFilter: 'blur(20px)',
+                                  boxShadow: '0 4px 24px rgba(15, 23, 42, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.75)',
+                              } as any)
+                            : undefined,
+                    ]}
+                    pointerEvents="none"
+                />
 
                 {/* Circular Navigation Nodes distributed evenly around the 360° circle */}
                 {items.map((item, index) => {
@@ -419,6 +457,15 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                                         : isSelected
                                         ? styles.itemBubbleActive
                                         : styles.itemBubbleInactive,
+                                    Platform.OS === 'web'
+                                        ? ({
+                                              boxShadow: isScan
+                                                  ? '0 6px 20px rgba(16, 185, 129, 0.45), 0 2px 6px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.6)'
+                                                  : isSelected
+                                                  ? '0 6px 20px rgba(15, 23, 42, 0.4), 0 2px 6px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.5)'
+                                                  : '0 4px 12px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.95)',
+                                          } as any)
+                                        : undefined,
                                 ]}
                                 onPress={() => rotateToItem(index, true)}
                                 activeOpacity={0.82}
@@ -435,7 +482,7 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                                     color={
                                         isScan || isSelected
                                             ? '#ffffff'
-                                            : '#475569'
+                                            : '#334155'
                                     }
                                 />
 
@@ -450,7 +497,16 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
 
                 {/* Center Hub Trigger Button: Tap to collapse into small ball */}
                 <TouchableOpacity
-                    style={styles.centerHubBtn}
+                    style={[
+                        styles.centerHubBtn,
+                        Platform.OS === 'web'
+                            ? ({
+                                  backdropFilter: 'blur(20px)',
+                                  WebkitBackdropFilter: 'blur(20px)',
+                                  boxShadow: '0 4px 16px rgba(15, 23, 42, 0.32), inset 0 1px 1px rgba(255, 255, 255, 0.35)',
+                              } as any)
+                            : undefined,
+                    ]}
                     onPress={closeMenu}
                     activeOpacity={0.8}
                     accessibilityRole="button"
@@ -475,15 +531,15 @@ const styles = StyleSheet.create({
         width: 50,
         height: 50,
         borderRadius: 25,
-        backgroundColor: 'rgba(15, 23, 42, 0.78)',
+        backgroundColor: 'rgba(15, 23, 42, 0.86)',
         borderWidth: 1.5,
         borderColor: 'rgba(255, 255, 255, 0.38)',
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#000000',
         shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.32,
-        shadowRadius: 10,
+        shadowOpacity: 0.28,
+        shadowRadius: 12,
         elevation: 8,
     },
     ballPulseDot: {
@@ -494,7 +550,7 @@ const styles = StyleSheet.create({
         height: 7,
         borderRadius: 3.5,
         backgroundColor: '#10b981',
-        borderWidth: 1,
+        borderWidth: 1.5,
         borderColor: '#ffffff',
     },
 
@@ -516,7 +572,7 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         borderColor: 'rgba(15, 23, 42, 0.08)',
         borderStyle: 'solid',
-        backgroundColor: 'rgba(255, 255, 255, 0.65)',
+        backgroundColor: 'rgba(255, 255, 255, 0.72)',
     },
 
     // Center Hub Button
@@ -525,14 +581,14 @@ const styles = StyleSheet.create({
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: 'rgba(15, 23, 42, 0.88)',
+        backgroundColor: 'rgba(15, 23, 42, 0.92)',
         borderWidth: 1.5,
-        borderColor: 'rgba(255, 255, 255, 0.42)',
+        borderColor: 'rgba(255, 255, 255, 0.48)',
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#0f172a',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.3,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.28,
         shadowRadius: 8,
         elevation: 6,
         zIndex: 100,
@@ -555,27 +611,27 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
+        shadowOpacity: 0.16,
         shadowRadius: 8,
         elevation: 6,
     },
     itemBubbleInactive: {
-        backgroundColor: 'rgba(255, 255, 255, 0.94)',
+        backgroundColor: 'rgba(255, 255, 255, 0.96)',
         borderWidth: 1,
-        borderColor: 'rgba(226, 232, 240, 0.9)',
+        borderColor: 'rgba(203, 213, 225, 0.85)',
     },
     itemBubbleActive: {
-        backgroundColor: 'rgba(15, 23, 42, 0.92)',
+        backgroundColor: '#0f172a',
         borderWidth: 1.5,
-        borderColor: 'rgba(255, 255, 255, 0.45)',
-        shadowColor: '#182232',
-        shadowOpacity: 0.42,
+        borderColor: 'rgba(255, 255, 255, 0.55)',
+        shadowColor: '#0f172a',
+        shadowOpacity: 0.38,
         shadowRadius: 10,
     },
     itemBubbleScan: {
         backgroundColor: '#10b981',
         borderWidth: 1.5,
-        borderColor: 'rgba(255, 255, 255, 0.55)',
+        borderColor: 'rgba(255, 255, 255, 0.7)',
         shadowColor: '#10b981',
         shadowOffset: { width: 0, height: 3 },
         shadowOpacity: 0.36,
@@ -589,28 +645,30 @@ const styles = StyleSheet.create({
         height: 4,
         borderRadius: 2,
         backgroundColor: '#22c55e',
+        borderWidth: 0.5,
+        borderColor: '#ffffff',
     },
     apexLabelBadge: {
         position: 'absolute',
-        top: -24,
+        top: -26,
         alignSelf: 'center',
-        paddingHorizontal: 12,
-        paddingVertical: 3.5,
-        borderRadius: 12,
-        backgroundColor: 'rgba(15, 23, 42, 0.88)',
+        paddingHorizontal: 13,
+        paddingVertical: 4,
+        borderRadius: 14,
+        backgroundColor: 'rgba(15, 23, 42, 0.9)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.22)',
+        borderColor: 'rgba(255, 255, 255, 0.28)',
         shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.22,
+        shadowOpacity: 0.24,
         shadowRadius: 6,
         elevation: 4,
         zIndex: 110,
     },
     apexLabelText: {
-        fontSize: 11.5,
+        fontSize: 12,
         fontWeight: '700',
         color: '#ffffff',
-        letterSpacing: 0.3,
+        letterSpacing: 0.4,
     },
 });
