@@ -232,6 +232,10 @@ function MainApp() {
                 setOverlay('none');
                 setSelectedNote(null);
             }
+            if (overlay === 'capture') {
+                setOverlay('none');
+                setAppendNote(null);
+            }
             animateToTab(tab);
         },
         [animateToTab, overlay]
@@ -461,26 +465,23 @@ function MainApp() {
         return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
     }
 
-    // Fullscreen Overlays (Capture & Note Viewer)
-    if (overlay === 'capture') {
-        return (
-            <CaptureScreen
-                targetFolder={targetFolder}
-                appendNote={appendNote}
-                onCancel={handleCaptureCancel}
-                onComplete={handleCaptureComplete}
-            />
-        );
-    }
-
     const screenWidth = Dimensions.get('window').width;
 
     return (
         <View style={styles.appContainer}>
             <StatusBar barStyle="dark-content" backgroundColor="#faf9f6" />
 
-            {/* Note Reader or Active Tab Screen Content with Animated Swipe Gestures */}
-            {overlay === 'result' && selectedNote ? (
+            {/* Note Reader, Document Scanner, or Active Tab Screen Content */}
+            {overlay === 'capture' ? (
+                <View style={styles.tabContent}>
+                    <CaptureScreen
+                        targetFolder={targetFolder}
+                        appendNote={appendNote}
+                        onCancel={handleCaptureCancel}
+                        onComplete={handleCaptureComplete}
+                    />
+                </View>
+            ) : overlay === 'result' && selectedNote ? (
                 <View style={styles.tabContent}>
                     <ResultsScreen
                         note={selectedNote}
@@ -657,11 +658,11 @@ function MainApp() {
                         onPress: () => handleSelectTab('stats'),
                     },
                 ]}
-                activeTabId={currentTab}
+                activeTabId={overlay === 'capture' ? 'scan' : currentTab}
                 bottomInset={insets.bottom}
                 leftInset={insets.left}
                 autoCollapseMs={15000}
-                initialOpen={true}
+                initialOpen={false}
             />
         </View>
     );

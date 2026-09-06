@@ -350,18 +350,6 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 </TouchableOpacity>
 
                 <View style={styles.topBarActions}>
-                    <TouchableOpacity
-                        style={[styles.aiTopPill, (isListening || isAiLoading) && styles.aiTopPillActive]}
-                        onPress={handleToggleMic}
-                        activeOpacity={0.8}
-                    >
-                        <Ionicons name="sparkles" size={13} color={(isListening || isAiLoading) ? '#ffffff' : '#1b4d3e'} />
-                        <Ionicons name="mic" size={12} color={(isListening || isAiLoading) ? '#ffffff' : '#4b6456'} style={{ marginLeft: 2 }} />
-                        <Text style={[styles.aiTopPillText, (isListening || isAiLoading) && styles.aiTopPillActiveText]}>
-                            Ask AI
-                        </Text>
-                    </TouchableOpacity>
-
                     {onAddMorePages && (
                         <TouchableOpacity
                             style={styles.addPagesPill}
@@ -437,26 +425,6 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                                 ]}
                             >
                                 {isPlayingAudio ? 'Stop Audio' : 'Listen (Audio)'}
-                            </Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                            style={[styles.mediaPill, isListening && styles.mediaPillMicActive]}
-                            onPress={handleToggleMic}
-                            activeOpacity={0.85}
-                        >
-                            <Ionicons
-                                name={isListening ? 'mic' : 'mic-outline'}
-                                size={15}
-                                color={isListening ? '#ffffff' : '#1b4d3e'}
-                            />
-                            <Text
-                                style={[
-                                    styles.mediaPillText,
-                                    isListening && styles.mediaPillMicActiveText,
-                                ]}
-                            >
-                                {isListening ? 'Listening...' : 'Ask AI & Mic'}
                             </Text>
                         </TouchableOpacity>
                     </View>
@@ -922,18 +890,31 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 </View>
             </Modal>
 
-            {/* Floating AI Copilot Action Button */}
+            {/* Single Modern Floating Mic Button (Translucent Frosted Glass) */}
             <TouchableOpacity
                 style={[
-                    styles.floatingAiFab,
-                    { bottom: Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 10) + 72 },
+                    styles.floatingMicFab,
+                    isListening && styles.floatingMicFabListening,
+                    { bottom: Math.max(insets.bottom, Platform.OS === 'android' ? 18 : 14) + 16 },
+                    Platform.OS === 'web'
+                        ? ({
+                              backdropFilter: 'blur(16px)',
+                              WebkitBackdropFilter: 'blur(16px)',
+                          } as any)
+                        : undefined,
                 ]}
                 onPress={handleToggleMic}
-                activeOpacity={0.85}
+                activeOpacity={0.82}
+                accessibilityRole="button"
+                accessibilityLabel="Ask AI with voice"
             >
-                <Ionicons name="sparkles" size={15} color="#ffffff" />
-                <Ionicons name="mic" size={14} color="#cde9d8" style={{ marginLeft: 2 }} />
-                <Text style={styles.floatingAiFabText}>Ask AI</Text>
+                <Animated.View style={{ transform: [{ scale: isListening ? micPulseAnim : 1 }] }}>
+                    <Ionicons
+                        name={isListening ? 'mic' : 'mic-outline'}
+                        size={25}
+                        color="#ffffff"
+                    />
+                </Animated.View>
             </TouchableOpacity>
         </View>
     );
@@ -1895,26 +1876,29 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#75777d',
     },
-    floatingAiFab: {
+    floatingMicFab: {
         position: 'absolute',
-        right: 16,
-        flexDirection: 'row',
+        right: 20,
+        width: 54,
+        height: 54,
+        borderRadius: 27,
         alignItems: 'center',
-        backgroundColor: '#182232',
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        borderRadius: 24,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.18,
-        shadowRadius: 8,
-        elevation: 4,
-        gap: 4,
-        zIndex: 99,
+        justifyContent: 'center',
+        backgroundColor: 'rgba(24, 34, 50, 0.76)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255, 255, 255, 0.36)',
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.28,
+        shadowRadius: 12,
+        elevation: 8,
+        zIndex: 999,
     },
-    floatingAiFabText: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: '#ffffff',
+    floatingMicFabListening: {
+        backgroundColor: 'rgba(16, 185, 129, 0.84)',
+        borderColor: 'rgba(255, 255, 255, 0.72)',
+        shadowColor: '#10b981',
+        shadowOpacity: 0.58,
+        shadowRadius: 16,
     },
 });

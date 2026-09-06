@@ -43,7 +43,7 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
     bottomInset = 0,
     leftInset = 0,
     autoCollapseMs = AUTO_COLLAPSE_MS,
-    initialOpen = true,
+    initialOpen = false,
     onOpenChange,
 }) => {
     const [isOpen, setIsOpen] = useState<boolean>(initialOpen);
@@ -295,7 +295,15 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                 pointerEvents={isOpen ? 'none' : 'auto'}
             >
                 <TouchableOpacity
-                    style={styles.ballButton}
+                    style={[
+                        styles.ballButton,
+                        Platform.OS === 'web'
+                            ? ({
+                                  backdropFilter: 'blur(16px)',
+                                  WebkitBackdropFilter: 'blur(16px)',
+                              } as any)
+                            : undefined,
+                    ]}
                     onPress={openMenu}
                     activeOpacity={0.8}
                     accessibilityRole="button"
@@ -306,6 +314,7 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                         size={22}
                         color="#ffffff"
                     />
+                    <View style={styles.ballPulseDot} />
                 </TouchableOpacity>
             </Animated.View>
 
@@ -436,16 +445,27 @@ const styles = StyleSheet.create({
         width: 50,
         height: 50,
         borderRadius: 25,
-        backgroundColor: 'rgba(24, 34, 50, 0.82)',
+        backgroundColor: 'rgba(15, 23, 42, 0.78)',
         borderWidth: 1.5,
-        borderColor: 'rgba(255, 255, 255, 0.32)',
+        borderColor: 'rgba(255, 255, 255, 0.38)',
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#000000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.28,
-        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.32,
+        shadowRadius: 10,
         elevation: 8,
+    },
+    ballPulseDot: {
+        position: 'absolute',
+        top: 7,
+        right: 7,
+        width: 7,
+        height: 7,
+        borderRadius: 3.5,
+        backgroundColor: '#10b981',
+        borderWidth: 1,
+        borderColor: '#ffffff',
     },
 
     // Expanded Big Circular Rotary Dial Wheel
@@ -464,9 +484,9 @@ const styles = StyleSheet.create({
         height: RADIUS * 2 + 10,
         borderRadius: RADIUS + 5,
         borderWidth: 1.5,
-        borderColor: 'rgba(24, 34, 50, 0.1)',
-        borderStyle: 'dashed',
-        backgroundColor: 'rgba(255, 255, 255, 0.45)',
+        borderColor: 'rgba(15, 23, 42, 0.08)',
+        borderStyle: 'solid',
+        backgroundColor: 'rgba(255, 255, 255, 0.65)',
     },
 
     // Center Hub Button
@@ -475,15 +495,15 @@ const styles = StyleSheet.create({
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: '#182232',
+        backgroundColor: 'rgba(15, 23, 42, 0.88)',
         borderWidth: 1.5,
-        borderColor: 'rgba(255, 255, 255, 0.35)',
+        borderColor: 'rgba(255, 255, 255, 0.42)',
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.25,
-        shadowRadius: 6,
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
         elevation: 6,
         zIndex: 100,
     },
@@ -505,29 +525,29 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.18,
+        shadowOpacity: 0.2,
         shadowRadius: 8,
         elevation: 6,
     },
     itemBubbleInactive: {
-        backgroundColor: '#ffffff',
+        backgroundColor: 'rgba(255, 255, 255, 0.94)',
         borderWidth: 1,
-        borderColor: '#e2e8f0',
+        borderColor: 'rgba(226, 232, 240, 0.9)',
     },
     itemBubbleActive: {
-        backgroundColor: '#182232',
+        backgroundColor: 'rgba(15, 23, 42, 0.92)',
         borderWidth: 1.5,
-        borderColor: '#0f172a',
+        borderColor: 'rgba(255, 255, 255, 0.45)',
         shadowColor: '#182232',
-        shadowOpacity: 0.38,
+        shadowOpacity: 0.42,
         shadowRadius: 10,
     },
     itemBubbleScan: {
-        backgroundColor: '#1e7e45',
+        backgroundColor: '#10b981',
         borderWidth: 1.5,
-        borderColor: '#166534',
-        shadowColor: '#1e7e45',
-        shadowOpacity: 0.42,
+        borderColor: 'rgba(255, 255, 255, 0.55)',
+        shadowColor: '#10b981',
+        shadowOpacity: 0.48,
         shadowRadius: 10,
     },
     activeDot: {
