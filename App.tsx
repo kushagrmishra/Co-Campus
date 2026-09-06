@@ -198,9 +198,13 @@ function MainApp() {
 
     const handleSelectTab = useCallback(
         (tab: BottomTab) => {
+            if (overlay === 'result') {
+                setOverlay('none');
+                setSelectedNote(null);
+            }
             animateToTab(tab);
         },
-        [animateToTab]
+        [animateToTab, overlay]
     );
 
     const handleSwipeNext = useCallback(() => {
@@ -358,11 +362,14 @@ function MainApp() {
         })
     ).current;
 
-    // Dedicated PanResponder on bottom reveal handle
+    // Dedicated PanResponder on bottom reveal handle (instant grant & release)
     const bottomRevealPanResponder = useRef(
         PanResponder.create({
             onStartShouldSetPanResponder: () => true,
             onMoveShouldSetPanResponder: () => true,
+            onPanResponderGrant: () => {
+                revealNavBar();
+            },
             onPanResponderRelease: () => {
                 revealNavBar();
             },
@@ -385,7 +392,7 @@ function MainApp() {
     });
 
     useEffect(() => {
-        if (isLoggedIn && overlay === 'none') {
+        if (isLoggedIn && overlay !== 'capture') {
             revealNavBar();
         }
         return () => {
@@ -519,39 +526,38 @@ function MainApp() {
         );
     }
 
-    if (overlay === 'result' && selectedNote) {
-        return (
-            <ResultsScreen
-                note={selectedNote}
-                onBack={handleBackFromResult}
-                onAddMorePages={handleAddMorePages}
-                onStartQuiz={handleStartQuiz}
-            />
-        );
-    }
-
     const screenWidth = Dimensions.get('window').width;
 
     return (
         <View style={styles.appContainer} onTouchStart={revealNavBar}>
             <StatusBar barStyle="dark-content" backgroundColor="#faf9f6" />
 
-            {/* Active Tab Screen Content with Animated Swipe Gestures */}
-            <Animated.View
-                style={[
-                    styles.tabContent,
-                    {
-                        transform: [{ translateX: dragX }],
-                        opacity: dragX.interpolate({
-                            inputRange: [-screenWidth * 0.45, 0, screenWidth * 0.45],
-                            outputRange: [0.84, 1, 0.84],
-                            extrapolate: 'clamp',
-                        }),
-                    },
-                ]}
-                {...screenPanResponder.panHandlers}
-            >
-                {currentTab === 'folders' && (
+            {/* Note Reader or Active Tab Screen Content with Animated Swipe Gestures */}
+            {overlay === 'result' && selectedNote ? (
+                <View style={styles.tabContent}>
+                    <ResultsScreen
+                        note={selectedNote}
+                        onBack={handleBackFromResult}
+                        onAddMorePages={handleAddMorePages}
+                        onStartQuiz={handleStartQuiz}
+                    />
+                </View>
+            ) : (
+                <Animated.View
+                    style={[
+                        styles.tabContent,
+                        {
+                            transform: [{ translateX: dragX }],
+                            opacity: dragX.interpolate({
+                                inputRange: [-screenWidth * 0.45, 0, screenWidth * 0.45],
+                                outputRange: [0.84, 1, 0.84],
+                                extrapolate: 'clamp',
+                            }),
+                        },
+                    ]}
+                    {...screenPanResponder.panHandlers}
+                >
+                    {currentTab === 'folders' && (
                     <HomeScreen
                         key={`home_${refreshKey}`}
                         onScanPress={handleScanPress}
@@ -624,6 +630,7 @@ function MainApp() {
                     </View>
                 )}
             </Animated.View>
+            )}
 
             {/* Transient Swipe Tab Indicator Toast */}
             {activeToast && (

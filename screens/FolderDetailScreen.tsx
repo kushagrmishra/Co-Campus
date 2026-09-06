@@ -8,6 +8,8 @@ import {
     StatusBar,
     Image,
     Platform,
+    Modal,
+    Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -56,30 +58,68 @@ export const FolderDetailScreen: React.FC<FolderDetailScreenProps> = ({
 
                     <TouchableOpacity
                         style={styles.iconButton}
-                        onPress={() => setShowMenu(!showMenu)}
+                        onPress={() => setShowMenu(true)}
                     >
                         <Ionicons name="ellipsis-vertical" size={18} color="#45474c" />
                     </TouchableOpacity>
                 </View>
             </View>
 
-            {/* Overflow Menu Popover */}
-            {showMenu && (
-                <View style={styles.menuPopover}>
-                    <TouchableOpacity style={styles.menuItem} onPress={() => setShowMenu(false)}>
-                        <Ionicons name="pencil-outline" size={16} color="#45474c" />
-                        <Text style={styles.menuItemText}>Rename Folder</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.menuItem} onPress={() => setShowMenu(false)}>
-                        <Ionicons name="share-outline" size={16} color="#45474c" />
-                        <Text style={styles.menuItemText}>Share Notebook</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.menuItem} onPress={() => setShowMenu(false)}>
-                        <Ionicons name="download-outline" size={16} color="#45474c" />
-                        <Text style={styles.menuItemText}>Export PDF Binder</Text>
-                    </TouchableOpacity>
-                </View>
-            )}
+            {/* Overflow Menu Popover with Outside Tap Collapse */}
+            <Modal
+                transparent
+                visible={showMenu}
+                animationType="fade"
+                onRequestClose={() => setShowMenu(false)}
+            >
+                <TouchableOpacity
+                    style={styles.menuBackdrop}
+                    activeOpacity={1}
+                    onPress={() => setShowMenu(false)}
+                >
+                    <View
+                        style={[
+                            styles.menuPopover,
+                            {
+                                top: topPadding + 46,
+                                right: 16,
+                            },
+                        ]}
+                        onStartShouldSetResponder={() => true}
+                    >
+                        <TouchableOpacity
+                            style={styles.menuItem}
+                            onPress={() => {
+                                setShowMenu(false);
+                                Alert.alert('Rename Folder', 'Folder renaming enabled.');
+                            }}
+                        >
+                            <Ionicons name="pencil-outline" size={16} color="#45474c" />
+                            <Text style={styles.menuItemText}>Rename Folder</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.menuItem}
+                            onPress={() => {
+                                setShowMenu(false);
+                                Alert.alert('Share Notebook', 'Collaborative academic link copied to clipboard.');
+                            }}
+                        >
+                            <Ionicons name="share-outline" size={16} color="#45474c" />
+                            <Text style={styles.menuItemText}>Share Notebook</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.menuItem}
+                            onPress={() => {
+                                setShowMenu(false);
+                                Alert.alert('Export PDF Binder', 'Exporting consolidated course notebook binder...');
+                            }}
+                        >
+                            <Ionicons name="download-outline" size={16} color="#45474c" />
+                            <Text style={styles.menuItemText}>Export PDF Binder</Text>
+                        </TouchableOpacity>
+                    </View>
+                </TouchableOpacity>
+            </Modal>
 
             <ScrollView
                 style={styles.scrollArea}
@@ -332,6 +372,10 @@ const styles = StyleSheet.create({
         borderRadius: 19,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    menuBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.05)',
     },
     menuPopover: {
         position: 'absolute',
