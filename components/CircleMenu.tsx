@@ -37,6 +37,14 @@ const AUTO_COLLAPSE_MS = 15000; // 15 seconds
 const TOTAL_ITEMS = 5;
 const STEP_ANGLE = (2 * Math.PI) / TOTAL_ITEMS; // 72 degrees in radians
 
+// Compute shortest angular distance between two angles in radians (always in [-PI, PI])
+const getShortestAngleDelta = (fromAngle: number, toAngle: number): number => {
+    let delta = (toAngle - fromAngle) % (2 * Math.PI);
+    if (delta > Math.PI) delta -= 2 * Math.PI;
+    if (delta < -Math.PI) delta += 2 * Math.PI;
+    return delta;
+};
+
 export const CircleMenu: React.FC<CircleMenuProps> = ({
     items,
     activeTabId,
@@ -66,7 +74,7 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
     const openAnim = useRef(new Animated.Value(initialOpen ? 1 : 0)).current;
     const ballAnim = useRef(new Animated.Value(initialOpen ? 0 : 1)).current;
 
-    // 25-second auto-collapse timer
+    // 15-second auto-collapse timer
     const autoCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isOpenRef = useRef<boolean>(isOpen);
     isOpenRef.current = isOpen;
@@ -120,7 +128,7 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
             }),
         ]).start();
 
-        // Schedule 25-second auto-collapse
+        // Schedule auto-collapse
         autoCollapseTimerRef.current = setTimeout(() => {
             closeMenu();
         }, autoCollapseMs);
@@ -151,37 +159,41 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
         };
     }, [autoCollapseMs, clearCollapseTimer, closeMenu, initialOpen, rotationAngle]);
 
-    // Rotate to target item
+    // Rotate to target item via shortest angular arc
     const rotateToItem = useCallback(
         (targetIndex: number, shouldTriggerPress = true) => {
             resetCollapseTimer();
             const boundedIndex = ((targetIndex % TOTAL_ITEMS) + TOTAL_ITEMS) % TOTAL_ITEMS;
             activeIndexRef.current = boundedIndex;
 
-            // Target rotation so item boundedIndex is at apex (-Math.PI / 2)
-            // Current angle normalized: find closest multiple of STEP_ANGLE
-            const curVal = currentAngleVal.current;
-            const targetOffset = -boundedIndex * STEP_ANGLE;
-            // Find k such that targetOffset + 2*PI*k is closest to curVal
-            const diff = targetOffset - curVal;
-            const k = Math.round(diff / (2 * Math.PI));
-            const nearestAngle = targetOffset - k * (2 * Math.PI);
+            // Target base angle so item boundedIndex is at apex (-Math.PI / 2)
+            const targetBase = -boundedIndex * STEP_ANGLE;
 
+            // Compute shortest angular delta to avoid unwanted 360-degree reverse flips
+            const curVal = currentAngleVal.current;
+            const delta = getShortestAngleDelta(curVal, targetBase);
+            const targetAngle = curVal + delta;
+
+            // Stop any conflicting in-flight animation immediately
+            rotationAngle.stopAnimation();
+
+            // Smooth spring rotation to destination
             Animated.spring(rotationAngle, {
-                toValue: nearestAngle,
-                bounciness: 6,
-                speed: 16,
+                toValue: targetAngle,
+                tension: 58,
+                friction: 10,
                 useNativeDriver: true,
-            }).start(() => {
-                if (shouldTriggerPress) {
-                    items[boundedIndex]?.onPress();
-                }
-            });
+            }).start();
+
+            // Immediately trigger press so screen transition occurs synchronously with dial rotation
+            if (shouldTriggerPress) {
+                items[boundedIndex]?.onPress();
+            }
         },
         [items, resetCollapseTimer, rotationAngle]
     );
 
-    // Sync rotation on external active tab change
+    // Sync rotation on external active tab change (e.g., swipe navigation)
     useEffect(() => {
         if (activeTabId) {
             const idx = items.findIndex((i) => i.id === activeTabId);
@@ -189,7 +201,7 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                 rotateToItem(idx, false);
             }
         }
-    }, [activeTabId, items, rotateToItem]);
+    }, [activeTabId]);
 
     // PanResponder for spinning / scrolling the circular wheel
     const panStartAngle = useRef<number>(0);
@@ -199,14 +211,16 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
 
     const panResponder = useRef(
         PanResponder.create({
-            onStartShouldSetPanResponder: () => true,
+            onStartShouldSetPanResponder: () => false,
+            onStartShouldSetPanResponderCapture: () => false,
+            onMoveShouldSetPanResponderCapture: () => false,
             onMoveShouldSetPanResponder: (_evt, gestureState) => {
-                return (
-                    Math.abs(gestureState.dx) > 4 || Math.abs(gestureState.dy) > 4
-                );
+                // Only capture when explicitly dragged more than 8 pixels
+                return Math.hypot(gestureState.dx, gestureState.dy) > 8;
             },
             onPanResponderGrant: (evt) => {
                 resetCollapseTimer();
+                rotationAngle.stopAnimation();
                 panStartRotation.current = currentAngleVal.current;
 
                 if (circleContainerRef.current) {
@@ -245,15 +259,12 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
             },
             onPanResponderRelease: () => {
                 resetCollapseTimer();
-                // When rotation stops, calculate which item is closest to the apex (-PI/2)
-                // Position of item i is: -PI/2 + i * STEP + rotation
-                // Apex is when -PI/2 + i * STEP + rotation = -PI/2 (mod 2*PI)
-                // i.e., i * STEP + rotation = 0 (mod 2*PI)
-                // i = -rotation / STEP
+                // When rotation stops, calculate which item is closest to apex
                 const currentRot = currentAngleVal.current;
                 const rawIdx = -currentRot / STEP_ANGLE;
-                const nearestIdx = Math.round(rawIdx);
-                rotateToItem(nearestIdx, true); // Opens that page automatically!
+                let nearestIdx = Math.round(rawIdx) % TOTAL_ITEMS;
+                if (nearestIdx < 0) nearestIdx += TOTAL_ITEMS;
+                rotateToItem(nearestIdx, true);
             },
         })
     ).current;
@@ -357,15 +368,21 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                     const x = RADIUS * Math.cos(theta);
                     const y = RADIUS * Math.sin(theta);
 
-                    // Distance from apex (-Math.PI / 2)
-                    let angleDiff = Math.abs((theta % (2 * Math.PI)) - (-Math.PI / 2));
-                    if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+                    // Angular distance from apex (-Math.PI / 2)
+                    const angleFromApex = index * STEP_ANGLE + renderAngle;
+                    let normAngle = angleFromApex % (2 * Math.PI);
+                    if (normAngle > Math.PI) normAngle -= 2 * Math.PI;
+                    if (normAngle < -Math.PI) normAngle += 2 * Math.PI;
+                    const distToApex = Math.abs(normAngle);
+                    const isApex = distToApex < 0.38;
 
-                    // Centered/active item is BIG (1.28x), others are small (0.82x)
-                    const isApex = angleDiff < 0.45;
-                    const scale = isApex ? 1.28 : 0.82;
+                    // Smooth, continuous scaling curve (peaks at 1.28x at apex, drops to 0.82x)
+                    const scale = 0.82 + 0.46 * Math.max(0, 1 - distToApex / 0.85);
                     const isScan = item.isAccent;
-                    const isCurrentActive = isApex || item.isActive;
+
+                    // Strictly only ONE item is ever marked as selected (fixes "stat app also selected" bug)
+                    const currentActiveId = activeTabId || items[activeIndexRef.current]?.id;
+                    const isSelected = item.id === currentActiveId;
 
                     return (
                         <View
@@ -386,7 +403,7 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                                     styles.itemBubble,
                                     isScan
                                         ? styles.itemBubbleScan
-                                        : isCurrentActive
+                                        : isSelected
                                         ? styles.itemBubbleActive
                                         : styles.itemBubbleInactive,
                                 ]}
@@ -397,20 +414,20 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                             >
                                 <Ionicons
                                     name={
-                                        isCurrentActive && item.activeIcon
+                                        isSelected && item.activeIcon
                                             ? item.activeIcon
                                             : item.icon
                                     }
                                     size={isScan ? 24 : isApex ? 22 : 19}
                                     color={
-                                        isScan || isCurrentActive
+                                        isScan || isSelected
                                             ? '#ffffff'
                                             : '#475569'
                                     }
                                 />
 
-                                {/* Active Tab Dot */}
-                                {isCurrentActive && !isScan && (
+                                {/* Active Tab Dot - strictly shown ONLY for the selected tab */}
+                                {isSelected && !isScan && (
                                     <View style={styles.activeDot} />
                                 )}
                             </TouchableOpacity>

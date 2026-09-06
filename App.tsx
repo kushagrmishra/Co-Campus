@@ -186,6 +186,8 @@ function MainApp() {
                 return;
             }
 
+            dragX.stopAnimation();
+
             const curIdx = TABS.findIndex((t) => t.id === cur);
             const targetIdx = TABS.findIndex((t) => t.id === targetTab);
             const dir = direction || (targetIdx > curIdx ? 'forward' : 'backward');
@@ -196,10 +198,10 @@ function MainApp() {
 
             isAnimatingTabRef.current = true;
 
-            // 1. Slide out current tab
+            // 1. Slide out current tab with smooth timing
             Animated.timing(dragX, {
                 toValue: exitX,
-                duration: 160,
+                duration: 140,
                 useNativeDriver: true,
             }).start(() => {
                 // 2. Switch tab
@@ -215,8 +217,8 @@ function MainApp() {
                 // 4. Spring smoothly into center
                 Animated.spring(dragX, {
                     toValue: 0,
-                    bounciness: 4,
-                    speed: 16,
+                    bounciness: 3,
+                    speed: 18,
                     useNativeDriver: true,
                 }).start(() => {
                     isAnimatingTabRef.current = false;
