@@ -91,14 +91,14 @@ function MainApp() {
         });
     }, [navBarAnim]);
 
-    // Start or reset 30-second countdown
+    // Start or reset 25-second countdown to collapse into ball
     const startHideTimer = useCallback(() => {
         if (hideTimerRef.current) {
             clearTimeout(hideTimerRef.current);
         }
         hideTimerRef.current = setTimeout(() => {
             hideNavBar();
-        }, 30000); // 30 seconds
+        }, 25000); // 25 seconds
     }, [hideNavBar]);
 
     // Reappear nav bar and begin 30s timer
@@ -751,12 +751,13 @@ function MainApp() {
                 </View>
             </Animated.View>
 
-            {/* Collapsed Circle Button with Arrow sitting at the bottom */}
+            {/* Collapsed Translucent Ball with Arrow sitting at bottom-left */}
             <Animated.View
                 style={[
                     styles.circleArrowContainer,
                     {
-                        bottom: Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 10) + 6,
+                        left: Math.max(insets.left, 18),
+                        bottom: Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 10) + 8,
                         opacity: circleBtnOpacity,
                         transform: [
                             { scale: circleBtnScale },
@@ -769,10 +770,10 @@ function MainApp() {
                 <TouchableOpacity
                     style={styles.circleArrowBtn}
                     onPress={revealNavBar}
-                    activeOpacity={0.82}
+                    activeOpacity={0.78}
                     accessibilityLabel="Open navigation menu"
                 >
-                    <Ionicons name="chevron-up" size={22} color="#ffffff" />
+                    <Ionicons name="chevron-up" size={24} color="#ffffff" />
                 </TouchableOpacity>
             </Animated.View>
         </View>
@@ -820,26 +821,22 @@ const styles = StyleSheet.create({
     },
     circleArrowContainer: {
         position: 'absolute',
-        left: 0,
-        right: 0,
-        alignItems: 'center',
-        justifyContent: 'center',
         zIndex: 90,
     },
     circleArrowBtn: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        backgroundColor: '#182232',
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        backgroundColor: 'rgba(24, 34, 50, 0.72)',
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#182232',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.32,
-        shadowRadius: 10,
+        shadowOpacity: 0.35,
+        shadowRadius: 12,
         elevation: 8,
         borderWidth: 1.5,
-        borderColor: '#3d4759',
+        borderColor: 'rgba(255, 255, 255, 0.35)',
     },
     navBarCollapseHandle: {
         position: 'absolute',
