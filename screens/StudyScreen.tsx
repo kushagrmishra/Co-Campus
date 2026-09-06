@@ -23,10 +23,75 @@ interface StudyScreenProps {
     onStartReview?: () => void;
     onSelectNote?: (note: SavedNote) => void;
     initialSubject?: string;
+    onFocusedModeChange?: (isFocused: boolean) => void;
 }
 
 type FlashcardLevel = 'All' | 'Foundations' | 'Core Concepts' | 'Exam Mastery';
 type QuizLevel = 'Foundations' | 'Standard' | 'Hard';
+
+interface LevelDefinition {
+    level: FlashcardLevel;
+    code: string;
+    label: string;
+    desc: string;
+}
+
+const LEVEL_DEFINITIONS: LevelDefinition[] = [
+    {
+        level: 'All',
+        code: 'AFO',
+        label: 'AFO · All Difficulties',
+        desc: 'Review all cards across complete course scope',
+    },
+    {
+        level: 'Foundations',
+        code: 'FNDS',
+        label: 'FNDS · Foundations',
+        desc: 'Basic definitions, terminology, and core axioms',
+    },
+    {
+        level: 'Core Concepts',
+        code: 'CC',
+        label: 'CC · Core Concepts',
+        desc: 'Standard theorems, mechanics, and relationships',
+    },
+    {
+        level: 'Exam Mastery',
+        code: 'EM',
+        label: 'EM · Exam Mastery',
+        desc: 'Advanced proofs, edge cases, and exam questions',
+    },
+];
+
+const getLevelTriggerLabel = (level: FlashcardLevel): string => {
+    switch (level) {
+        case 'All':
+            return 'Levels';
+        case 'Foundations':
+            return 'FNDS';
+        case 'Core Concepts':
+            return 'CC';
+        case 'Exam Mastery':
+            return 'EM';
+        default:
+            return 'Levels';
+    }
+};
+
+const getLevelCode = (level: string): string => {
+    switch (level) {
+        case 'All':
+            return 'AFO';
+        case 'Foundations':
+            return 'FNDS';
+        case 'Core Concepts':
+            return 'CC';
+        case 'Exam Mastery':
+            return 'EM';
+        default:
+            return level;
+    }
+};
 
 interface DisplayFlashcard {
     id: string;
@@ -323,6 +388,7 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
     onStartReview,
     onSelectNote,
     initialSubject,
+    onFocusedModeChange,
 }) => {
     const insets = useSafeAreaInsets();
     const topPadding = Platform.OS === 'android' ? Math.max(insets.top, StatusBar.currentHeight || 0, 16) : Math.max(insets.top, 10);
@@ -338,8 +404,28 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
     const [reviewedCount, setReviewedCount] = useState<number>(0);
     const [flashcardLevel, setFlashcardLevel] = useState<FlashcardLevel>('All');
     const [showFcLevelModal, setShowFcLevelModal] = useState<boolean>(false);
-    const [activeStudyMode, setActiveStudyMode] = useState<'spaced' | 'cram' | 'audio' | 'practice'>('spaced');
+    const [activeStudyMode, setActiveStudyMode] = useState<'spaced' | 'reader' | 'cram' | 'audio' | 'practice'>('spaced');
     const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+
+    // Focused Review Mode State
+    const [isFocusedReview, setIsFocusedReview] = useState<boolean>(false);
+    const [focusedTimerSeconds, setFocusedTimerSeconds] = useState<number>(0);
+    const [isTimerPaused, setIsTimerPaused] = useState<boolean>(false);
+    const [focusedCards, setFocusedCards] = useState<DisplayFlashcard[]>([]);
+    const [focusedCardIndex, setFocusedCardIndex] = useState<number>(0);
+    const [remainingCount, setRemainingCount] = useState<number>(0);
+    const [completedCount, setCompletedCount] = useState<number>(0);
+    const [isFocusedCardFlipped, setIsFocusedCardFlipped] = useState<boolean>(false);
+    const [isFocusedSpeaking, setIsFocusedSpeaking] = useState<boolean>(false);
+    const [isSessionComplete, setIsSessionComplete] = useState<boolean>(false);
+    const [sessionStats, setSessionStats] = useState({ again: 0, hard: 0, good: 0, easy: 0 });
+
+    // Flashcard Reader Mode State (when not in focused mode)
+    const [isReaderMode, setIsReaderMode] = useState<boolean>(false);
+    const [readerSearch, setReaderSearch] = useState<string>('');
+    const [readerExpandedIds, setReaderExpandedIds] = useState<Record<string, boolean>>({});
+    const [isReaderPlayingAll, setIsReaderPlayingAll] = useState<boolean>(false);
+    const [readerActiveCardId, setReaderActiveCardId] = useState<string | null>(null);
 
     // Quiz & MCQ Maker State
     const [quizLevel, setQuizLevel] = useState<QuizLevel>('Foundations');
@@ -364,6 +450,19 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
             Speech.stop();
         };
     }, []);
+
+    // Live Study Timer for Focused Review
+    useEffect(() => {
+        let interval: any = null;
+        if (isFocusedReview && !isTimerPaused && !isSessionComplete) {
+            interval = setInterval(() => {
+                setFocusedTimerSeconds((prev) => prev + 1);
+            }, 1000);
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [isFocusedReview, isTimerPaused, isSessionComplete]);
 
     // Distinct subjects from real folders and notes
     const availableSubjects = useMemo(() => {
@@ -577,11 +676,503 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
         setQuizFinished(false);
     };
 
+    // Format live timer MM:SS
+    const formatTime = (totalSeconds: number): string => {
+        const mins = Math.floor(totalSeconds / 60);
+        const secs = totalSeconds % 60;
+        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    };
+
+    // Start Daily Focused Review
+    const startDailyFocusedReview = useCallback(() => {
+        const pool = cardsForSubject.length > 0 ? cardsForSubject : allFlashcards;
+        const sessionDeck = pool.length > 0 ? pool : CURATED_SUBJECT_FLASHCARDS;
+        setFocusedCards(sessionDeck);
+        setRemainingCount(sessionDeck.length);
+        setCompletedCount(0);
+        setFocusedCardIndex(0);
+        setIsFocusedCardFlipped(false);
+        setIsSessionComplete(false);
+        setFocusedTimerSeconds(0);
+        setIsTimerPaused(false);
+        setSessionStats({ again: 0, hard: 0, good: 0, easy: 0 });
+        Speech.stop();
+        setIsSpeaking(false);
+        setIsFocusedSpeaking(false);
+        setIsReaderPlayingAll(false);
+        setReaderActiveCardId(null);
+        setIsFocusedReview(true);
+        if (onFocusedModeChange) {
+            onFocusedModeChange(true);
+        }
+        if (onStartReview) {
+            onStartReview();
+        }
+    }, [cardsForSubject, allFlashcards, onFocusedModeChange, onStartReview]);
+
+    // Exit Daily Focused Review
+    const exitDailyFocusedReview = useCallback(() => {
+        Speech.stop();
+        setIsFocusedSpeaking(false);
+        setIsFocusedReview(false);
+        if (onFocusedModeChange) {
+            onFocusedModeChange(false);
+        }
+    }, [onFocusedModeChange]);
+
+    // Rating a card in Focused Review (decrements remaining count)
+    const handleFocusedRating = (rating: 'again' | 'hard' | 'good' | 'easy') => {
+        Speech.stop();
+        setIsFocusedSpeaking(false);
+        setSessionStats((prev) => ({ ...prev, [rating]: prev[rating] + 1 }));
+        setCompletedCount((c) => c + 1);
+
+        setRemainingCount((prevRemaining) => {
+            const nextRemaining = Math.max(0, prevRemaining - 1);
+            if (nextRemaining === 0) {
+                setIsSessionComplete(true);
+            } else {
+                setFocusedCardIndex((prevIdx) => (prevIdx + 1) % focusedCards.length);
+                setIsFocusedCardFlipped(false);
+            }
+            return nextRemaining;
+        });
+    };
+
+    const handleFocusedFlip = () => {
+        setIsFocusedCardFlipped((prev) => !prev);
+    };
+
+    const handleFocusedAudio = async (text: string) => {
+        if (isFocusedSpeaking) {
+            await Speech.stop();
+            setIsFocusedSpeaking(false);
+        } else {
+            setIsFocusedSpeaking(true);
+            Speech.speak(text, {
+                rate: 0.95,
+                pitch: 1.0,
+                onDone: () => setIsFocusedSpeaking(false),
+                onStopped: () => setIsFocusedSpeaking(false),
+                onError: () => setIsFocusedSpeaking(false),
+            });
+        }
+    };
+
+    // Filtered cards for Flashcard Reader Mode
+    const filteredReaderCards = useMemo(() => {
+        if (!readerSearch.trim()) return cardsForSubject;
+        const q = readerSearch.toLowerCase();
+        return cardsForSubject.filter(
+            (c) =>
+                c.question.toLowerCase().includes(q) ||
+                c.answer.toLowerCase().includes(q) ||
+                c.subject.toLowerCase().includes(q) ||
+                c.hint.toLowerCase().includes(q)
+        );
+    }, [cardsForSubject, readerSearch]);
+
+    // Toggle card expansion in Flashcard Reader
+    const toggleReaderCardExpand = (id: string) => {
+        setReaderExpandedIds((prev) => ({
+            ...prev,
+            [id]: !prev[id],
+        }));
+    };
+
+    // Sequential audio player for Flashcard Reader
+    const playReaderCardSequence = useCallback(
+        (index: number, cardList: DisplayFlashcard[]) => {
+            if (index >= cardList.length) {
+                setIsReaderPlayingAll(false);
+                setReaderActiveCardId(null);
+                return;
+            }
+            const card = cardList[index];
+            setReaderActiveCardId(card.id);
+            const textToSpeak = `Card ${index + 1}. Question: ${card.question}. Target Answer: ${card.answer}`;
+            Speech.speak(textToSpeak, {
+                rate: 0.95,
+                pitch: 1.0,
+                onDone: () => {
+                    setTimeout(() => {
+                        playReaderCardSequence(index + 1, cardList);
+                    }, 600);
+                },
+                onStopped: () => {
+                    setIsReaderPlayingAll(false);
+                    setReaderActiveCardId(null);
+                },
+                onError: () => {
+                    setIsReaderPlayingAll(false);
+                    setReaderActiveCardId(null);
+                },
+            });
+        },
+        []
+    );
+
+    const toggleReaderAudioAll = useCallback(() => {
+        if (isReaderPlayingAll) {
+            Speech.stop();
+            setIsReaderPlayingAll(false);
+            setReaderActiveCardId(null);
+        } else {
+            setIsReaderPlayingAll(true);
+            playReaderCardSequence(0, filteredReaderCards);
+        }
+    }, [isReaderPlayingAll, filteredReaderCards, playReaderCardSequence]);
+
     const totalDue = cardsForSubject.length;
     const subjectSubtitle =
         selectedSubject === 'All'
             ? `${folders.map((f) => f.name).join(' • ') || 'Connected Subjects'}`
             : `${selectedSubject} Deck`;
+
+    // ================= DEDICATED FULLSCREEN FOCUSED REVIEW =================
+    // No other tabs or bottom navigation. Completely distraction-free.
+    if (isFocusedReview) {
+        const currentFocusedCard = focusedCards[focusedCardIndex];
+        const sessionTotal = focusedCards.length;
+        const completed = Math.max(0, sessionTotal - remainingCount);
+        const progressPct = sessionTotal > 0 ? Math.min(100, Math.max(0, (completed / sessionTotal) * 100)) : 0;
+        const ringSize = 120;
+        const strokeWidth = 8;
+        const radius = (ringSize - strokeWidth) / 2;
+        const circumference = 2 * Math.PI * radius;
+        const strokeDashoffset = circumference - (progressPct / 100) * circumference;
+
+        return (
+            <View style={[styles.focusedRoot, { paddingTop: topPadding }]}>
+                <StatusBar barStyle="dark-content" backgroundColor="#faf9f6" />
+
+                {/* Top Header: Exit Focus, Subject, Live Timer */}
+                <View style={styles.focusedTopBar}>
+                    <TouchableOpacity
+                        style={styles.focusedExitBtn}
+                        onPress={exitDailyFocusedReview}
+                        activeOpacity={0.8}
+                    >
+                        <Ionicons name="arrow-back" size={18} color="#182232" />
+                        <Text style={styles.focusedExitBtnText}>Exit Focus</Text>
+                    </TouchableOpacity>
+
+                    <View style={styles.focusedTitleCenter}>
+                        <View style={styles.focusedSubjectBadge}>
+                            <Text style={styles.focusedSubjectText}>
+                                {selectedSubject === 'All' ? 'ALL SUBJECTS' : selectedSubject.toUpperCase()}
+                            </Text>
+                        </View>
+                        <Text style={styles.focusedHeaderSub}>Daily Focus Drill</Text>
+                    </View>
+
+                    {/* Live Timer Pill with Pulsing Indicator & Pause/Play */}
+                    <View style={styles.focusedTimerPill}>
+                        <View style={[styles.focusedTimerDot, isTimerPaused && styles.focusedTimerDotPaused]} />
+                        <Ionicons name="time-outline" size={13} color="#1b4d3e" style={{ marginRight: 4 }} />
+                        <Text style={styles.focusedTimerText}>{formatTime(focusedTimerSeconds)}</Text>
+                        <TouchableOpacity
+                            onPress={() => setIsTimerPaused(!isTimerPaused)}
+                            style={styles.focusedTimerToggle}
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons
+                                name={isTimerPaused ? 'play' : 'pause'}
+                                size={11}
+                                color="#1b4d3e"
+                            />
+                        </TouchableOpacity>
+                    </View>
+                </View>
+
+                {/* Main Session Content */}
+                <ScrollView
+                    style={styles.focusedScrollView}
+                    contentContainerStyle={styles.focusedScrollContent}
+                    showsVerticalScrollIndicator={false}
+                >
+                    {!isSessionComplete && currentFocusedCard ? (
+                        <View style={styles.focusedCardArea}>
+                            {/* Reactive Circular Progress Ring wrapping Decrementing Count */}
+                            <View style={styles.ringContainer}>
+                                <View style={{ width: ringSize, height: ringSize, alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                                    {Platform.OS === 'web' ? (
+                                        // @ts-ignore
+                                        <svg
+                                            width={ringSize}
+                                            height={ringSize}
+                                            style={{ position: 'absolute', top: 0, left: 0, transform: 'rotate(-90deg)' }}
+                                        >
+                                            {/* Background track circle */}
+                                            {/* @ts-ignore */}
+                                            <circle
+                                                cx={ringSize / 2}
+                                                cy={ringSize / 2}
+                                                r={radius}
+                                                stroke="#e2e8f0"
+                                                strokeWidth={strokeWidth}
+                                                fill="none"
+                                            />
+                                            {/* Dynamic reactive progress circle */}
+                                            {/* @ts-ignore */}
+                                            <circle
+                                                cx={ringSize / 2}
+                                                cy={ringSize / 2}
+                                                r={radius}
+                                                stroke="#1b4d3e"
+                                                strokeWidth={strokeWidth}
+                                                fill="none"
+                                                strokeDasharray={circumference}
+                                                strokeDashoffset={strokeDashoffset}
+                                                strokeLinecap="round"
+                                                style={{
+                                                    transition: 'stroke-dashoffset 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                                                }}
+                                            />
+                                        </svg>
+                                    ) : (
+                                        <View
+                                            style={{
+                                                position: 'absolute',
+                                                width: ringSize,
+                                                height: ringSize,
+                                                borderRadius: ringSize / 2,
+                                                borderWidth: strokeWidth,
+                                                borderColor: progressPct > 0 ? '#1b4d3e' : '#e2e8f0',
+                                            }}
+                                        />
+                                    )}
+
+                                    {/* Inner Decrementing Count */}
+                                    <View style={styles.ringInnerContent}>
+                                        <Text style={styles.ringBigCount}>{remainingCount}</Text>
+                                        <Text style={styles.ringCountLabel}>LEFT</Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.ringStatusMeta}>
+                                    <Text style={styles.ringStatusText}>
+                                        {completed} of {sessionTotal} completed ({Math.round(progressPct)}%)
+                                    </Text>
+                                    <View style={styles.ringMiniProgressBarTrack}>
+                                        <View
+                                            style={[
+                                                styles.ringMiniProgressBarFill,
+                                                { width: `${progressPct}%` },
+                                            ]}
+                                        />
+                                    </View>
+                                </View>
+                            </View>
+
+                            {/* Main Focused Card (Tap anywhere to flip) */}
+                            <TouchableOpacity
+                                style={[
+                                    styles.focusedCard,
+                                    isFocusedCardFlipped && styles.focusedCardFlipped,
+                                ]}
+                                activeOpacity={0.94}
+                                onPress={handleFocusedFlip}
+                            >
+                                <View style={styles.focusedCardTop}>
+                                    <View style={styles.cardHeaderBadges}>
+                                        <View style={styles.cardSubjectBadge}>
+                                            <Text style={styles.cardSubjectText}>
+                                                {currentFocusedCard.subject.toUpperCase()}
+                                            </Text>
+                                        </View>
+                                        <View style={styles.cardLevelBadge}>
+                                            <Text style={styles.cardLevelBadgeText}>
+                                                {getLevelCode(currentFocusedCard.level)}
+                                            </Text>
+                                        </View>
+                                    </View>
+
+                                    <View style={styles.topActionsRow}>
+                                        <TouchableOpacity
+                                            style={[styles.audioPillBtn, isFocusedSpeaking && styles.audioPillBtnActive]}
+                                            onPress={() =>
+                                                handleFocusedAudio(
+                                                    isFocusedCardFlipped
+                                                        ? `Target Answer: ${currentFocusedCard.answer}`
+                                                        : `Recall Question: ${currentFocusedCard.question}`
+                                                )
+                                            }
+                                        >
+                                            <Ionicons
+                                                name={isFocusedSpeaking ? 'volume-high' : 'volume-medium-outline'}
+                                                size={13}
+                                                color={isFocusedSpeaking ? '#ffffff' : '#4b6456'}
+                                            />
+                                            <Text style={[styles.audioPillText, isFocusedSpeaking && styles.audioPillTextActive]}>
+                                                {isFocusedSpeaking ? 'Reading' : 'Listen'}
+                                            </Text>
+                                        </TouchableOpacity>
+
+                                        <View style={styles.flipPill}>
+                                            <Ionicons name="swap-horizontal-outline" size={12} color="#45474c" />
+                                            <Text style={styles.flipIndicator}>
+                                                {isFocusedCardFlipped ? 'Answer' : 'Question'}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                </View>
+
+                                {!isFocusedCardFlipped ? (
+                                    <View style={styles.focusedCardBody}>
+                                        <Text style={styles.focusedPromptLabel}>RECALL QUESTION</Text>
+                                        <Text style={styles.focusedQuestionText}>{currentFocusedCard.question}</Text>
+                                        <View style={styles.focusedCardFooter}>
+                                            <Ionicons name="sparkles-outline" size={13} color="#75777d" />
+                                            <Text style={styles.focusedHintText}>
+                                                {currentFocusedCard.hint || 'Active Recall Deck'}
+                                            </Text>
+                                        </View>
+                                        <View style={styles.focusedTapRevealPill}>
+                                            <Ionicons name="eye-outline" size={14} color="#1b4d3e" style={{ marginRight: 5 }} />
+                                            <Text style={styles.focusedTapRevealText}>Tap card to reveal target answer</Text>
+                                        </View>
+                                    </View>
+                                ) : (
+                                    <View style={styles.focusedCardBody}>
+                                        <Text style={styles.focusedAnswerLabel}>TARGET ANSWER</Text>
+                                        <Text style={styles.focusedAnswerText}>{currentFocusedCard.answer}</Text>
+                                        <Text style={styles.focusedAnswerHint}>{currentFocusedCard.hint}</Text>
+
+                                        {/* Spaced Repetition Rating Buttons */}
+                                        <View style={styles.focusedRatingContainer}>
+                                            <Text style={styles.focusedRatingHeader}>RATE RETENTION TO ADVANCE:</Text>
+                                            <View style={styles.focusedRatingGrid}>
+                                                <TouchableOpacity
+                                                    style={[styles.focusedRateBtn, styles.focusedRateAgain]}
+                                                    onPress={() => handleFocusedRating('again')}
+                                                    activeOpacity={0.8}
+                                                >
+                                                    <Text style={[styles.focusedRateBtnTitle, { color: '#dc2626' }]}>Again</Text>
+                                                    <Text style={styles.focusedRateBtnSub}>Repeat</Text>
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity
+                                                    style={[styles.focusedRateBtn, styles.focusedRateHard]}
+                                                    onPress={() => handleFocusedRating('hard')}
+                                                    activeOpacity={0.8}
+                                                >
+                                                    <Text style={[styles.focusedRateBtnTitle, { color: '#d97706' }]}>Hard</Text>
+                                                    <Text style={styles.focusedRateBtnSub}>Tough</Text>
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity
+                                                    style={[styles.focusedRateBtn, styles.focusedRateGood]}
+                                                    onPress={() => handleFocusedRating('good')}
+                                                    activeOpacity={0.8}
+                                                >
+                                                    <Text style={[styles.focusedRateBtnTitle, { color: '#059669' }]}>Good</Text>
+                                                    <Text style={styles.focusedRateBtnSub}>Recalled</Text>
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity
+                                                    style={[styles.focusedRateBtn, styles.focusedRateEasy]}
+                                                    onPress={() => handleFocusedRating('easy')}
+                                                    activeOpacity={0.8}
+                                                >
+                                                    <Text style={[styles.focusedRateBtnTitle, { color: '#16a34a' }]}>Easy</Text>
+                                                    <Text style={styles.focusedRateBtnSub}>Mastered</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                        </View>
+                                    </View>
+                                )}
+                            </TouchableOpacity>
+
+                            {/* Secondary Navigation Row */}
+                            <View style={styles.focusedNavRow}>
+                                <TouchableOpacity
+                                    style={styles.focusedNavPrevBtn}
+                                    onPress={() => {
+                                        Speech.stop();
+                                        setIsFocusedSpeaking(false);
+                                        setIsFocusedCardFlipped(false);
+                                        setFocusedCardIndex((prev) => (prev > 0 ? prev - 1 : 0));
+                                    }}
+                                    activeOpacity={0.7}
+                                    disabled={focusedCardIndex === 0}
+                                >
+                                    <Ionicons
+                                        name="chevron-back"
+                                        size={16}
+                                        color={focusedCardIndex === 0 ? '#cbd5e1' : '#475569'}
+                                    />
+                                    <Text
+                                        style={[
+                                            styles.focusedNavPrevText,
+                                            focusedCardIndex === 0 && { color: '#cbd5e1' },
+                                        ]}
+                                    >
+                                        Previous
+                                    </Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={styles.focusedNavSkipBtn}
+                                    onPress={() => handleFocusedRating('good')}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={styles.focusedNavSkipText}>Got It / Next</Text>
+                                    <Ionicons name="chevron-forward" size={16} color="#ffffff" />
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    ) : (
+                        /* Session Completion Celebration View */
+                        <View style={styles.completionCard}>
+                            <View style={styles.completionIconWrap}>
+                                <Ionicons name="trophy" size={40} color="#1b4d3e" />
+                            </View>
+                            <Text style={styles.completionTitle}>Daily Focused Review Complete!</Text>
+                            <Text style={styles.completionSubtitle}>
+                                All cards reviewed in this session. Memory retention boosted!
+                            </Text>
+
+                            <View style={styles.completionStatsGrid}>
+                                <View style={styles.completionStatCard}>
+                                    <Ionicons name="time" size={18} color="#1b4d3e" />
+                                    <Text style={styles.completionStatVal}>{formatTime(focusedTimerSeconds)}</Text>
+                                    <Text style={styles.completionStatLabel}>Time Focused</Text>
+                                </View>
+                                <View style={styles.completionStatCard}>
+                                    <Ionicons name="checkmark-circle" size={18} color="#059669" />
+                                    <Text style={styles.completionStatVal}>{sessionStats.good + sessionStats.easy}</Text>
+                                    <Text style={styles.completionStatLabel}>Mastered</Text>
+                                </View>
+                                <View style={styles.completionStatCard}>
+                                    <Ionicons name="repeat" size={18} color="#d97706" />
+                                    <Text style={styles.completionStatVal}>{sessionStats.again + sessionStats.hard}</Text>
+                                    <Text style={styles.completionStatLabel}>Review Soon</Text>
+                                </View>
+                            </View>
+
+                            <TouchableOpacity
+                                style={styles.completionRestartBtn}
+                                onPress={startDailyFocusedReview}
+                                activeOpacity={0.85}
+                            >
+                                <Ionicons name="refresh" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                                <Text style={styles.completionRestartText}>Review Deck Again</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.completionExitBtn}
+                                onPress={exitDailyFocusedReview}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={styles.completionExitText}>Return to Study Hub</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+                </ScrollView>
+            </View>
+        );
+    }
 
     return (
         <View style={[styles.container, { paddingTop: topPadding }]}>
@@ -736,13 +1327,7 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
 
                                 <TouchableOpacity
                                     style={styles.startReviewBtn}
-                                    onPress={() => {
-                                        if (onStartReview) {
-                                            onStartReview();
-                                        } else {
-                                            handleFlip();
-                                        }
-                                    }}
+                                    onPress={startDailyFocusedReview}
                                     activeOpacity={0.9}
                                 >
                                     <Ionicons name="play" size={14} color="#ffffff" style={{ marginRight: 6 }} />
@@ -750,177 +1335,348 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                 </TouchableOpacity>
                             </View>
 
-                            {/* Flashcard Header with Level Setter Dropdown */}
+                            {/* Flashcard Header with Level Setter Dropdown & Reader Mode Toggle */}
                             <View style={styles.sectionHeaderRow}>
                                 <View style={styles.sectionHeaderTitleRow}>
                                     <Ionicons name="layers-outline" size={18} color="#182232" style={{ marginRight: 6 }} />
                                     <Text style={styles.sectionTitle}>
-                                        Interactive Flashcards ({cardsForSubject.length} Available)
+                                        {isReaderMode ? 'Flashcard Reader' : 'Interactive Flashcards'} ({cardsForSubject.length})
                                     </Text>
                                 </View>
 
-                                {/* Flashcard Level Setter Dropdown Trigger */}
-                                <TouchableOpacity
-                                    style={styles.levelDropdownTrigger}
-                                    onPress={() => setShowFcLevelModal(true)}
-                                    activeOpacity={0.8}
-                                >
-                                    <Ionicons name="funnel-outline" size={12} color="#182232" style={{ marginRight: 4 }} />
-                                    <Text style={styles.levelDropdownText}>
-                                        {flashcardLevel === 'All' ? 'All Levels' : flashcardLevel}
-                                    </Text>
-                                    <Ionicons name="chevron-down" size={13} color="#182232" style={{ marginLeft: 4 }} />
-                                </TouchableOpacity>
+                                <View style={styles.headerRightControls}>
+                                    {/* Flashcard Reader Mode Toggle Button */}
+                                    <TouchableOpacity
+                                        style={[styles.readerHeaderPill, isReaderMode && styles.readerHeaderPillActive]}
+                                        onPress={() => {
+                                            Speech.stop();
+                                            setIsSpeaking(false);
+                                            setIsReaderPlayingAll(false);
+                                            setReaderActiveCardId(null);
+                                            setIsReaderMode(!isReaderMode);
+                                        }}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons
+                                            name={isReaderMode ? 'card-outline' : 'book-outline'}
+                                            size={12}
+                                            color={isReaderMode ? '#ffffff' : '#182232'}
+                                            style={{ marginRight: 4 }}
+                                        />
+                                        <Text style={[styles.readerHeaderPillText, isReaderMode && styles.readerHeaderPillTextActive]}>
+                                            {isReaderMode ? 'Card View' : 'Reader'}
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    {/* Flashcard Level Setter Dropdown Trigger (Shortforms: Levels, FNDS, CC, EM) */}
+                                    <TouchableOpacity
+                                        style={styles.levelDropdownTrigger}
+                                        onPress={() => setShowFcLevelModal(true)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons name="funnel-outline" size={12} color="#182232" style={{ marginRight: 4 }} />
+                                        <Text style={styles.levelDropdownText}>
+                                            {getLevelTriggerLabel(flashcardLevel)}
+                                        </Text>
+                                        <Ionicons name="chevron-down" size={13} color="#182232" style={{ marginLeft: 4 }} />
+                                    </TouchableOpacity>
+                                </View>
                             </View>
 
-                            {/* Flashcard Hint Banner */}
-                            <View style={styles.tapPromptRow}>
-                                <Ionicons name="finger-print-outline" size={13} color="#75777d" style={{ marginRight: 5 }} />
-                                <Text style={styles.tapPromptText}>Tap anywhere on card to flip between prompt and answer</Text>
-                            </View>
-
-                            {/* Main Interactive Flashcard (Tap to Flip) */}
-                            {currentCard ? (
-                                <TouchableOpacity
-                                    style={[styles.flashcardCard, isFlipped && styles.flashcardCardFlipped]}
-                                    activeOpacity={0.93}
-                                    onPress={handleFlip}
-                                >
-                                    <View style={styles.flashcardTop}>
-                                        <View style={styles.cardHeaderBadges}>
-                                            <View style={styles.cardSubjectBadge}>
-                                                <Text style={styles.cardSubjectText}>{currentCard.subject.toUpperCase()}</Text>
-                                            </View>
-                                            <View style={styles.cardLevelBadge}>
-                                                <Text style={styles.cardLevelBadgeText}>{currentCard.level}</Text>
-                                            </View>
-                                        </View>
-
-                                        <View style={styles.topActionsRow}>
-                                            <TouchableOpacity
-                                                style={[styles.audioPillBtn, isSpeaking && styles.audioPillBtnActive]}
-                                                onPress={() =>
-                                                    handleReadAudio(
-                                                        isFlipped
-                                                            ? `Target Answer: ${currentCard.answer}`
-                                                            : `Recall Question: ${currentCard.question}`
-                                                    )
-                                                }
-                                            >
-                                                <Ionicons
-                                                    name={isSpeaking ? 'volume-high' : 'volume-medium-outline'}
-                                                    size={13}
-                                                    color={isSpeaking ? '#ffffff' : '#4b6456'}
-                                                />
-                                                <Text style={[styles.audioPillText, isSpeaking && styles.audioPillTextActive]}>
-                                                    {isSpeaking ? 'Reading' : 'Listen'}
-                                                </Text>
-                                            </TouchableOpacity>
-
-                                            <View style={styles.flipPill}>
-                                                <Ionicons name="swap-horizontal-outline" size={12} color="#45474c" />
-                                                <Text style={styles.flipIndicator}>{isFlipped ? 'Answer' : 'Question'}</Text>
-                                            </View>
-                                        </View>
+                            {!isReaderMode ? (
+                                <>
+                                    {/* Flashcard Hint Banner */}
+                                    <View style={styles.tapPromptRow}>
+                                        <Ionicons name="finger-print-outline" size={13} color="#75777d" style={{ marginRight: 5 }} />
+                                        <Text style={styles.tapPromptText}>Tap anywhere on card to flip between prompt and answer</Text>
                                     </View>
 
-                                    {!isFlipped ? (
-                                        <View style={styles.cardBody}>
-                                            <Text style={styles.cardPromptLabel}>RECALL QUESTION</Text>
-                                            <Text style={styles.cardQuestionText}>{currentCard.question}</Text>
-                                            <View style={styles.cardFooterRow}>
-                                                <Ionicons name="information-circle-outline" size={13} color="#75777d" />
-                                                <Text style={styles.cardFooterHint}>
+                                    {/* Main Interactive Flashcard (Tap to Flip) */}
+                                    {currentCard ? (
+                                        <TouchableOpacity
+                                            style={[styles.flashcardCard, isFlipped && styles.flashcardCardFlipped]}
+                                            activeOpacity={0.93}
+                                            onPress={handleFlip}
+                                        >
+                                            <View style={styles.flashcardTop}>
+                                                <View style={styles.cardHeaderBadges}>
+                                                    <View style={styles.cardSubjectBadge}>
+                                                        <Text style={styles.cardSubjectText}>{currentCard.subject.toUpperCase()}</Text>
+                                                    </View>
+                                                    <View style={styles.cardLevelBadge}>
+                                                        <Text style={styles.cardLevelBadgeText}>{getLevelCode(currentCard.level)}</Text>
+                                                    </View>
+                                                </View>
+
+                                                <View style={styles.topActionsRow}>
+                                                    <TouchableOpacity
+                                                        style={[styles.audioPillBtn, isSpeaking && styles.audioPillBtnActive]}
+                                                        onPress={() =>
+                                                            handleReadAudio(
+                                                                isFlipped
+                                                                    ? `Target Answer: ${currentCard.answer}`
+                                                                    : `Recall Question: ${currentCard.question}`
+                                                            )
+                                                        }
+                                                    >
+                                                        <Ionicons
+                                                            name={isSpeaking ? 'volume-high' : 'volume-medium-outline'}
+                                                            size={13}
+                                                            color={isSpeaking ? '#ffffff' : '#4b6456'}
+                                                        />
+                                                        <Text style={[styles.audioPillText, isSpeaking && styles.audioPillTextActive]}>
+                                                            {isSpeaking ? 'Reading' : 'Listen'}
+                                                        </Text>
+                                                    </TouchableOpacity>
+
+                                                    <View style={styles.flipPill}>
+                                                        <Ionicons name="swap-horizontal-outline" size={12} color="#45474c" />
+                                                        <Text style={styles.flipIndicator}>{isFlipped ? 'Answer' : 'Question'}</Text>
+                                                    </View>
+                                                </View>
+                                            </View>
+
+                                            {!isFlipped ? (
+                                                <View style={styles.cardBody}>
+                                                    <Text style={styles.cardPromptLabel}>RECALL QUESTION</Text>
+                                                    <Text style={styles.cardQuestionText}>{currentCard.question}</Text>
+                                                    <View style={styles.cardFooterRow}>
+                                                        <Ionicons name="information-circle-outline" size={13} color="#75777d" />
+                                                        <Text style={styles.cardFooterHint}>
+                                                            Card {safeCardIndex + 1} of {cardsForSubject.length}
+                                                        </Text>
+                                                    </View>
+                                                </View>
+                                            ) : (
+                                                <View style={styles.cardBody}>
+                                                    <Text style={styles.cardAnswerLabel}>TARGET ANSWER</Text>
+                                                    <Text style={styles.cardAnswerText}>{currentCard.answer}</Text>
+                                                    <Text style={styles.cardAnswerSub}>{currentCard.hint}</Text>
+                                                </View>
+                                            )}
+
+                                            {/* Rating Bar (Appears when flipped) */}
+                                            {isFlipped && (
+                                                <View style={styles.ratingBar}>
+                                                    <TouchableOpacity
+                                                        style={styles.ratingBtn}
+                                                        onPress={() => handleRating('again')}
+                                                    >
+                                                        <Text style={styles.ratingBtnTitle}>Again</Text>
+                                                        <Text style={styles.ratingBtnSub}>&lt;1m</Text>
+                                                    </TouchableOpacity>
+
+                                                    <TouchableOpacity
+                                                        style={styles.ratingBtn}
+                                                        onPress={() => handleRating('hard')}
+                                                    >
+                                                        <Text style={styles.ratingBtnTitle}>Hard</Text>
+                                                        <Text style={styles.ratingBtnSub}>12h</Text>
+                                                    </TouchableOpacity>
+
+                                                    <TouchableOpacity
+                                                        style={[styles.ratingBtn, styles.ratingBtnGood]}
+                                                        onPress={() => handleRating('good')}
+                                                    >
+                                                        <Text style={[styles.ratingBtnTitle, styles.ratingBtnGoodText]}>Good</Text>
+                                                        <Text style={[styles.ratingBtnSub, styles.ratingBtnGoodText]}>1d</Text>
+                                                    </TouchableOpacity>
+
+                                                    <TouchableOpacity
+                                                        style={styles.ratingBtn}
+                                                        onPress={() => handleRating('easy')}
+                                                    >
+                                                        <Text style={styles.ratingBtnTitle}>Easy</Text>
+                                                        <Text style={styles.ratingBtnSub}>4d</Text>
+                                                    </TouchableOpacity>
+                                                </View>
+                                            )}
+                                        </TouchableOpacity>
+                                    ) : (
+                                        <View style={styles.emptyCardBox}>
+                                            <Ionicons name="file-tray-outline" size={32} color="#75777d" />
+                                            <Text style={styles.emptyCardTitle}>No cards in this level</Text>
+                                            <Text style={styles.emptyCardSub}>
+                                                Select another difficulty level or show all cards.
+                                            </Text>
+                                            <TouchableOpacity
+                                                style={styles.resetLevelBtn}
+                                                onPress={() => setFlashcardLevel('All')}
+                                            >
+                                                <Text style={styles.resetLevelBtnText}>Show All Levels</Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                    )}
+
+                                    {/* Card Navigation Controls with explicit Next & Previous Buttons */}
+                                    {cardsForSubject.length > 0 && (
+                                        <View style={styles.navigationControlsRow}>
+                                            <TouchableOpacity
+                                                style={styles.navBtnPrev}
+                                                onPress={handlePrevCard}
+                                                activeOpacity={0.8}
+                                            >
+                                                <Ionicons name="chevron-back" size={16} color="#182232" />
+                                                <Text style={styles.navBtnTextPrev}>Previous</Text>
+                                            </TouchableOpacity>
+
+                                            <View style={styles.cardCounterPill}>
+                                                <Text style={styles.cardCounterText}>
                                                     Card {safeCardIndex + 1} of {cardsForSubject.length}
                                                 </Text>
                                             </View>
-                                        </View>
-                                    ) : (
-                                        <View style={styles.cardBody}>
-                                            <Text style={styles.cardAnswerLabel}>TARGET ANSWER</Text>
-                                            <Text style={styles.cardAnswerText}>{currentCard.answer}</Text>
-                                            <Text style={styles.cardAnswerSub}>{currentCard.hint}</Text>
-                                        </View>
-                                    )}
-
-                                    {/* Rating Bar (Appears when flipped) */}
-                                    {isFlipped && (
-                                        <View style={styles.ratingBar}>
-                                            <TouchableOpacity
-                                                style={styles.ratingBtn}
-                                                onPress={() => handleRating('again')}
-                                            >
-                                                <Text style={styles.ratingBtnTitle}>Again</Text>
-                                                <Text style={styles.ratingBtnSub}>&lt;1m</Text>
-                                            </TouchableOpacity>
 
                                             <TouchableOpacity
-                                                style={styles.ratingBtn}
-                                                onPress={() => handleRating('hard')}
+                                                style={styles.navBtnNext}
+                                                onPress={handleNextCard}
+                                                activeOpacity={0.8}
                                             >
-                                                <Text style={styles.ratingBtnTitle}>Hard</Text>
-                                                <Text style={styles.ratingBtnSub}>12h</Text>
-                                            </TouchableOpacity>
-
-                                            <TouchableOpacity
-                                                style={[styles.ratingBtn, styles.ratingBtnGood]}
-                                                onPress={() => handleRating('good')}
-                                            >
-                                                <Text style={[styles.ratingBtnTitle, styles.ratingBtnGoodText]}>Good</Text>
-                                                <Text style={[styles.ratingBtnSub, styles.ratingBtnGoodText]}>1d</Text>
-                                            </TouchableOpacity>
-
-                                            <TouchableOpacity
-                                                style={styles.ratingBtn}
-                                                onPress={() => handleRating('easy')}
-                                            >
-                                                <Text style={styles.ratingBtnTitle}>Easy</Text>
-                                                <Text style={styles.ratingBtnSub}>4d</Text>
+                                                <Text style={styles.navBtnTextNext}>Next Card</Text>
+                                                <Ionicons name="chevron-forward" size={16} color="#ffffff" style={{ marginLeft: 4 }} />
                                             </TouchableOpacity>
                                         </View>
                                     )}
-                                </TouchableOpacity>
+                                </>
                             ) : (
-                                <View style={styles.emptyCardBox}>
-                                    <Ionicons name="file-tray-outline" size={32} color="#75777d" />
-                                    <Text style={styles.emptyCardTitle}>No cards in this level</Text>
-                                    <Text style={styles.emptyCardSub}>
-                                        Select another difficulty level or show all cards.
-                                    </Text>
-                                    <TouchableOpacity
-                                        style={styles.resetLevelBtn}
-                                        onPress={() => setFlashcardLevel('All')}
-                                    >
-                                        <Text style={styles.resetLevelBtnText}>Show All Levels</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            )}
+                                /* ================= FLASHCARD READER MODE ================= */
+                                <View style={styles.readerRoot}>
+                                    {/* Reader Search & Controls Bar */}
+                                    <View style={styles.readerControlsCard}>
+                                        <View style={styles.readerSearchRow}>
+                                            <Ionicons name="search-outline" size={16} color="#75777d" style={{ marginRight: 8 }} />
+                                            <TextInput
+                                                style={styles.readerSearchInput}
+                                                placeholder="Search cards, keywords, or definitions..."
+                                                placeholderTextColor="#94a3b8"
+                                                value={readerSearch}
+                                                onChangeText={setReaderSearch}
+                                            />
+                                            {readerSearch.length > 0 && (
+                                                <TouchableOpacity onPress={() => setReaderSearch('')}>
+                                                    <Ionicons name="close-circle" size={16} color="#94a3b8" />
+                                                </TouchableOpacity>
+                                            )}
+                                        </View>
 
-                            {/* Card Navigation Controls with explicit Next & Previous Buttons */}
-                            {cardsForSubject.length > 0 && (
-                                <View style={styles.navigationControlsRow}>
-                                    <TouchableOpacity
-                                        style={styles.navBtnPrev}
-                                        onPress={handlePrevCard}
-                                        activeOpacity={0.8}
-                                    >
-                                        <Ionicons name="chevron-back" size={16} color="#182232" />
-                                        <Text style={styles.navBtnTextPrev}>Previous</Text>
-                                    </TouchableOpacity>
+                                        <View style={styles.readerToolbarRow}>
+                                            {/* Continuous Audio Player */}
+                                            <TouchableOpacity
+                                                style={[styles.readerToolBtn, isReaderPlayingAll && styles.readerToolBtnActive]}
+                                                onPress={toggleReaderAudioAll}
+                                                activeOpacity={0.8}
+                                            >
+                                                <Ionicons
+                                                    name={isReaderPlayingAll ? 'stop-circle' : 'volume-high'}
+                                                    size={15}
+                                                    color={isReaderPlayingAll ? '#ffffff' : '#1b4d3e'}
+                                                    style={{ marginRight: 5 }}
+                                                />
+                                                <Text style={[styles.readerToolBtnText, isReaderPlayingAll && styles.readerToolBtnTextActive]}>
+                                                    {isReaderPlayingAll ? 'Stop Audio' : 'Read All Aloud'}
+                                                </Text>
+                                            </TouchableOpacity>
 
-                                    <View style={styles.cardCounterPill}>
-                                        <Text style={styles.cardCounterText}>
-                                            Card {safeCardIndex + 1} of {cardsForSubject.length}
-                                        </Text>
+                                            {/* Quick Launch into Focused Review */}
+                                            <TouchableOpacity
+                                                style={styles.readerFocusedLaunchBtn}
+                                                onPress={startDailyFocusedReview}
+                                                activeOpacity={0.8}
+                                            >
+                                                <Ionicons name="flash" size={13} color="#ffffff" style={{ marginRight: 5 }} />
+                                                <Text style={styles.readerFocusedLaunchText}>Start Focused Drill</Text>
+                                            </TouchableOpacity>
+                                        </View>
                                     </View>
 
+                                    {/* Stream of flashcards */}
+                                    {filteredReaderCards.length > 0 ? (
+                                        filteredReaderCards.map((card, idx) => {
+                                            const isExpanded = readerExpandedIds[card.id] ?? true;
+                                            const isCurrentlyPlaying = readerActiveCardId === card.id;
+
+                                            return (
+                                                <View
+                                                    key={card.id}
+                                                    style={[
+                                                        styles.readerCardItem,
+                                                        isCurrentlyPlaying && styles.readerCardItemPlaying,
+                                                    ]}
+                                                >
+                                                    <View style={styles.readerCardHeader}>
+                                                        <View style={styles.readerCardIndexBadge}>
+                                                            <Text style={styles.readerCardIndexText}>#{idx + 1}</Text>
+                                                        </View>
+                                                        <View style={styles.cardSubjectBadge}>
+                                                            <Text style={styles.cardSubjectText}>{card.subject.toUpperCase()}</Text>
+                                                        </View>
+                                                        <View style={styles.cardLevelBadge}>
+                                                            <Text style={styles.cardLevelBadgeText}>{getLevelCode(card.level)}</Text>
+                                                        </View>
+
+                                                        <View style={{ flex: 1 }} />
+
+                                                        <TouchableOpacity
+                                                            style={[styles.audioPillBtn, isCurrentlyPlaying && styles.audioPillBtnActive]}
+                                                            onPress={() =>
+                                                                handleReadAudio(
+                                                                    `Question: ${card.question}. Target Answer: ${card.answer}`
+                                                                )
+                                                            }
+                                                        >
+                                                            <Ionicons
+                                                                name={isCurrentlyPlaying ? 'volume-high' : 'volume-medium-outline'}
+                                                                size={13}
+                                                                color={isCurrentlyPlaying ? '#ffffff' : '#4b6456'}
+                                                            />
+                                                            <Text style={[styles.audioPillText, isCurrentlyPlaying && styles.audioPillTextActive]}>
+                                                                {isCurrentlyPlaying ? 'Playing' : 'Listen'}
+                                                            </Text>
+                                                        </TouchableOpacity>
+
+                                                        <TouchableOpacity
+                                                            style={styles.readerExpandBtn}
+                                                            onPress={() => toggleReaderCardExpand(card.id)}
+                                                        >
+                                                            <Ionicons
+                                                                name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                                                                size={16}
+                                                                color="#182232"
+                                                            />
+                                                        </TouchableOpacity>
+                                                    </View>
+
+                                                    <Text style={styles.readerQuestionText}>{card.question}</Text>
+
+                                                    {isExpanded && (
+                                                        <View style={styles.readerAnswerBox}>
+                                                            <Text style={styles.readerAnswerLabel}>TARGET ANSWER</Text>
+                                                            <Text style={styles.readerAnswerText}>{card.answer}</Text>
+                                                            {card.hint ? (
+                                                                <View style={styles.readerHintRow}>
+                                                                    <Ionicons name="sparkles-outline" size={12} color="#75777d" />
+                                                                    <Text style={styles.readerHintText}>{card.hint}</Text>
+                                                                </View>
+                                                            ) : null}
+                                                        </View>
+                                                    )}
+                                                </View>
+                                            );
+                                        })
+                                    ) : (
+                                        <View style={styles.emptyCardBox}>
+                                            <Ionicons name="search-outline" size={32} color="#75777d" />
+                                            <Text style={styles.emptyCardTitle}>No flashcards match query</Text>
+                                            <Text style={styles.emptyCardSub}>Try searching for another keyword or term.</Text>
+                                        </View>
+                                    )}
+
                                     <TouchableOpacity
-                                        style={styles.navBtnNext}
-                                        onPress={handleNextCard}
-                                        activeOpacity={0.8}
+                                        style={styles.readerSwitchToCardBtn}
+                                        onPress={() => setIsReaderMode(false)}
+                                        activeOpacity={0.85}
                                     >
-                                        <Text style={styles.navBtnTextNext}>Next Card</Text>
-                                        <Ionicons name="chevron-forward" size={16} color="#ffffff" style={{ marginLeft: 4 }} />
+                                        <Ionicons name="layers-outline" size={15} color="#182232" style={{ marginRight: 6 }} />
+                                        <Text style={styles.readerSwitchToCardText}>Switch Back to Card Flip View</Text>
                                     </TouchableOpacity>
                                 </View>
                             )}
@@ -931,20 +1687,44 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                             </View>
                             <View style={styles.modeGrid}>
                                 <TouchableOpacity
-                                    style={[styles.modeCard, activeStudyMode === 'spaced' && styles.modeCardActive]}
-                                    onPress={() => setActiveStudyMode('spaced')}
+                                    style={[styles.modeCard, activeStudyMode === 'spaced' && !isReaderMode && styles.modeCardActive]}
+                                    onPress={() => {
+                                        setIsReaderMode(false);
+                                        setActiveStudyMode('spaced');
+                                    }}
                                     activeOpacity={0.8}
                                 >
-                                    <View style={[styles.modeIconBox, activeStudyMode === 'spaced' && styles.modeIconBoxActive]}>
+                                    <View style={[styles.modeIconBox, activeStudyMode === 'spaced' && !isReaderMode && styles.modeIconBoxActive]}>
                                         <Ionicons
                                             name="git-network-outline"
                                             size={18}
-                                            color={activeStudyMode === 'spaced' ? '#ffffff' : '#4b6456'}
+                                            color={activeStudyMode === 'spaced' && !isReaderMode ? '#ffffff' : '#4b6456'}
                                         />
                                     </View>
                                     <View style={styles.modeTextWrap}>
                                         <Text style={styles.modeTitle}>Spaced Repetition</Text>
                                         <Text style={styles.modeSubtitle}>Optimal retention</Text>
+                                    </View>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[styles.modeCard, isReaderMode && styles.modeCardActive]}
+                                    onPress={() => {
+                                        setIsReaderMode(true);
+                                        setActiveStudyMode('reader');
+                                    }}
+                                    activeOpacity={0.8}
+                                >
+                                    <View style={[styles.modeIconBox, isReaderMode && styles.modeIconBoxActive]}>
+                                        <Ionicons
+                                            name="book-outline"
+                                            size={18}
+                                            color={isReaderMode ? '#ffffff' : '#1b4d3e'}
+                                        />
+                                    </View>
+                                    <View style={styles.modeTextWrap}>
+                                        <Text style={styles.modeTitle}>Flashcard Reader</Text>
+                                        <Text style={styles.modeSubtitle}>Continuous study stream</Text>
                                     </View>
                                 </TouchableOpacity>
 
@@ -1345,39 +2125,40 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                             Filter study deck cards by conceptual difficulty:
                         </Text>
 
-                        {(['All', 'Foundations', 'Core Concepts', 'Exam Mastery'] as FlashcardLevel[]).map((lvl) => {
-                            const isSelected = flashcardLevel === lvl;
+                        {LEVEL_DEFINITIONS.map((def) => {
+                            const isSelected = flashcardLevel === def.level;
                             return (
                                 <TouchableOpacity
-                                    key={lvl}
+                                    key={def.level}
                                     style={[styles.levelOptionItem, isSelected && styles.levelOptionItemSelected]}
                                     onPress={() => {
-                                        setFlashcardLevel(lvl);
+                                        setFlashcardLevel(def.level);
                                         setCardIndex(0);
                                         setIsFlipped(false);
                                         setShowFcLevelModal(false);
                                     }}
                                 >
-                                    <View>
-                                        <Text
-                                            style={[
-                                                styles.levelOptionItemTitle,
-                                                isSelected && styles.levelOptionItemTitleSelected,
-                                            ]}
-                                        >
-                                            {lvl === 'All' ? 'All Difficulty Levels' : lvl}
-                                        </Text>
+                                    <View style={{ flex: 1, paddingRight: 8 }}>
+                                        <View style={styles.modalLevelTitleRow}>
+                                            <View style={[styles.modalLevelBadge, isSelected && styles.modalLevelBadgeSelected]}>
+                                                <Text style={[styles.modalLevelBadgeText, isSelected && styles.modalLevelBadgeTextSelected]}>
+                                                    {def.code}
+                                                </Text>
+                                            </View>
+                                            <Text
+                                                style={[
+                                                    styles.levelOptionItemTitle,
+                                                    isSelected && styles.levelOptionItemTitleSelected,
+                                                ]}
+                                            >
+                                                {def.label}
+                                            </Text>
+                                        </View>
                                         <Text style={styles.levelOptionItemSub}>
-                                            {lvl === 'All'
-                                                ? 'Review all cards across complete course scope'
-                                                : lvl === 'Foundations'
-                                                ? 'Basic definitions, terminology, and key statements'
-                                                : lvl === 'Core Concepts'
-                                                ? 'Standard theorems, mechanics, and relationships'
-                                                : 'Advanced proofs, edge cases, and exam questions'}
+                                            {def.desc}
                                         </Text>
                                     </View>
-                                    {isSelected && <Ionicons name="checkmark" size={18} color="#182232" />}
+                                    {isSelected && <Ionicons name="checkmark-circle" size={20} color="#1b4d3e" />}
                                 </TouchableOpacity>
                             );
                         })}
@@ -2724,5 +3505,640 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '700',
         color: '#ffffff',
+    },
+
+    // Header Right Controls & Reader Mode Pill
+    headerRightControls: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    readerHeaderPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 14,
+        backgroundColor: '#f1f5f9',
+        borderWidth: 1,
+        borderColor: '#cbd5e1',
+    },
+    readerHeaderPillActive: {
+        backgroundColor: '#1b4d3e',
+        borderColor: '#1b4d3e',
+    },
+    readerHeaderPillText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#182232',
+    },
+    readerHeaderPillTextActive: {
+        color: '#ffffff',
+    },
+
+    // Level Modal Badges
+    modalLevelTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 3,
+        gap: 8,
+    },
+    modalLevelBadge: {
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 6,
+        backgroundColor: '#f1f5f9',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    modalLevelBadgeSelected: {
+        backgroundColor: '#e6f4ea',
+        borderColor: '#1b4d3e',
+    },
+    modalLevelBadgeText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#475569',
+    },
+    modalLevelBadgeTextSelected: {
+        color: '#1b4d3e',
+    },
+
+    // ================= FOCUSED REVIEW STYLES =================
+    focusedRoot: {
+        flex: 1,
+        backgroundColor: '#faf9f6',
+    },
+    focusedTopBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f0ede6',
+        backgroundColor: '#ffffff',
+    },
+    focusedExitBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+        borderRadius: 8,
+        backgroundColor: '#f8fafc',
+    },
+    focusedExitBtnText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#182232',
+    },
+    focusedTitleCenter: {
+        alignItems: 'center',
+    },
+    focusedSubjectBadge: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+        backgroundColor: '#f1f5f9',
+    },
+    focusedSubjectText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#1b4d3e',
+        letterSpacing: 0.6,
+    },
+    focusedHeaderSub: {
+        fontSize: 12,
+        color: '#64748b',
+        fontWeight: '500',
+        marginTop: 2,
+    },
+    focusedTimerPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#e6f4ea',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#bbf7d0',
+    },
+    focusedTimerDot: {
+        width: 7,
+        height: 7,
+        borderRadius: 4,
+        backgroundColor: '#22c55e',
+        marginRight: 6,
+    },
+    focusedTimerDotPaused: {
+        backgroundColor: '#f59e0b',
+    },
+    focusedTimerText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#1b4d3e',
+        letterSpacing: 0.5,
+    },
+    focusedTimerToggle: {
+        marginLeft: 6,
+        padding: 2,
+    },
+    focusedScrollView: {
+        flex: 1,
+    },
+    focusedScrollContent: {
+        paddingHorizontal: 20,
+        paddingTop: 24,
+        paddingBottom: 60,
+        alignItems: 'center',
+    },
+    focusedCardArea: {
+        width: '100%',
+        maxWidth: 620,
+        alignItems: 'center',
+    },
+
+    // Reactive Progress Ring & Decrementing Counter
+    ringContainer: {
+        alignItems: 'center',
+        marginBottom: 26,
+    },
+    ringInnerContent: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    ringBigCount: {
+        fontSize: 34,
+        fontWeight: '900',
+        color: '#182232',
+        lineHeight: 38,
+    },
+    ringCountLabel: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#64748b',
+        letterSpacing: 1,
+        marginTop: -2,
+    },
+    ringStatusMeta: {
+        alignItems: 'center',
+        marginTop: 10,
+    },
+    ringStatusText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#475569',
+        marginBottom: 6,
+    },
+    ringMiniProgressBarTrack: {
+        width: 140,
+        height: 5,
+        borderRadius: 3,
+        backgroundColor: '#e2e8f0',
+        overflow: 'hidden',
+    },
+    ringMiniProgressBarFill: {
+        height: '100%',
+        backgroundColor: '#1b4d3e',
+        borderRadius: 3,
+    },
+
+    // Focused Card
+    focusedCard: {
+        width: '100%',
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+        padding: 22,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.06,
+        shadowRadius: 14,
+        elevation: 3,
+        minHeight: 280,
+    },
+    focusedCardFlipped: {
+        borderColor: '#1b4d3e',
+        backgroundColor: '#fcfdfd',
+    },
+    focusedCardTop: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    focusedCardBody: {
+        flex: 1,
+        justifyContent: 'space-between',
+    },
+    focusedPromptLabel: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#94a3b8',
+        letterSpacing: 0.8,
+        marginBottom: 8,
+    },
+    focusedQuestionText: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#0f172a',
+        lineHeight: 28,
+        marginBottom: 16,
+    },
+    focusedCardFooter: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 14,
+    },
+    focusedHintText: {
+        fontSize: 12,
+        color: '#64748b',
+        fontWeight: '500',
+    },
+    focusedTapRevealPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f0fdf4',
+        borderWidth: 1,
+        borderColor: '#bbf7d0',
+        borderRadius: 12,
+        paddingVertical: 10,
+        marginTop: 8,
+    },
+    focusedTapRevealText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#1b4d3e',
+    },
+    focusedAnswerLabel: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#1b4d3e',
+        letterSpacing: 0.8,
+        marginBottom: 8,
+    },
+    focusedAnswerText: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: '#0f172a',
+        lineHeight: 27,
+        marginBottom: 10,
+    },
+    focusedAnswerHint: {
+        fontSize: 12,
+        color: '#64748b',
+        marginBottom: 18,
+        fontStyle: 'italic',
+    },
+
+    // Rating in Focused Mode
+    focusedRatingContainer: {
+        borderTopWidth: 1,
+        borderTopColor: '#f1f5f9',
+        paddingTop: 14,
+        marginTop: 8,
+    },
+    focusedRatingHeader: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#64748b',
+        letterSpacing: 0.5,
+        marginBottom: 10,
+        textAlign: 'center',
+    },
+    focusedRatingGrid: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    focusedRateBtn: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+    },
+    focusedRateAgain: {
+        backgroundColor: '#fef2f2',
+        borderColor: '#fecaca',
+    },
+    focusedRateHard: {
+        backgroundColor: '#fffbeb',
+        borderColor: '#fde68a',
+    },
+    focusedRateGood: {
+        backgroundColor: '#f0fdf4',
+        borderColor: '#bbf7d0',
+    },
+    focusedRateEasy: {
+        backgroundColor: '#ecfdf5',
+        borderColor: '#a7f3d0',
+    },
+    focusedRateBtnTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    focusedRateBtnSub: {
+        fontSize: 10,
+        color: '#64748b',
+        marginTop: 2,
+    },
+
+    // Focused Nav Row
+    focusedNavRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: '100%',
+        marginTop: 18,
+    },
+    focusedNavPrevBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 10,
+        backgroundColor: '#ffffff',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        gap: 4,
+    },
+    focusedNavPrevText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#475569',
+    },
+    focusedNavSkipBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+        borderRadius: 10,
+        backgroundColor: '#1b4d3e',
+        gap: 4,
+    },
+    focusedNavSkipText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#ffffff',
+    },
+
+    // Session Completion Card
+    completionCard: {
+        width: '100%',
+        maxWidth: 500,
+        backgroundColor: '#ffffff',
+        borderRadius: 24,
+        padding: 32,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.08,
+        shadowRadius: 24,
+        elevation: 4,
+        marginTop: 20,
+    },
+    completionIconWrap: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: '#e6f4ea',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 18,
+    },
+    completionTitle: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#182232',
+        textAlign: 'center',
+        marginBottom: 8,
+    },
+    completionSubtitle: {
+        fontSize: 14,
+        color: '#64748b',
+        textAlign: 'center',
+        marginBottom: 24,
+        lineHeight: 20,
+    },
+    completionStatsGrid: {
+        flexDirection: 'row',
+        gap: 12,
+        width: '100%',
+        marginBottom: 28,
+    },
+    completionStatCard: {
+        flex: 1,
+        backgroundColor: '#f8fafc',
+        borderRadius: 14,
+        padding: 14,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    completionStatVal: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#182232',
+        marginTop: 6,
+    },
+    completionStatLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#64748b',
+        marginTop: 2,
+    },
+    completionRestartBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+        backgroundColor: '#1b4d3e',
+        paddingVertical: 14,
+        borderRadius: 12,
+        marginBottom: 10,
+    },
+    completionRestartText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#ffffff',
+    },
+    completionExitBtn: {
+        paddingVertical: 10,
+    },
+    completionExitText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#64748b',
+    },
+
+    // ================= FLASHCARD READER MODE STYLES =================
+    readerRoot: {
+        width: '100%',
+        marginTop: 6,
+    },
+    readerControlsCard: {
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        padding: 14,
+        marginBottom: 16,
+    },
+    readerSearchRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#f8fafc',
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        marginBottom: 12,
+    },
+    readerSearchInput: {
+        flex: 1,
+        fontSize: 13,
+        color: '#182232',
+    },
+    readerToolbarRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 10,
+    },
+    readerToolBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        borderRadius: 8,
+        backgroundColor: '#f0fdf4',
+        borderWidth: 1,
+        borderColor: '#bbf7d0',
+    },
+    readerToolBtnActive: {
+        backgroundColor: '#dc2626',
+        borderColor: '#dc2626',
+    },
+    readerToolBtnText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1b4d3e',
+    },
+    readerToolBtnTextActive: {
+        color: '#ffffff',
+    },
+    readerFocusedLaunchBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        borderRadius: 8,
+        backgroundColor: '#182232',
+    },
+    readerFocusedLaunchText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#ffffff',
+    },
+    readerCardItem: {
+        backgroundColor: '#ffffff',
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        padding: 16,
+        marginBottom: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    readerCardItemPlaying: {
+        borderColor: '#1b4d3e',
+        backgroundColor: '#f0fdf4',
+    },
+    readerCardHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 10,
+        gap: 6,
+    },
+    readerCardIndexBadge: {
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        backgroundColor: '#e2e8f0',
+    },
+    readerCardIndexText: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#475569',
+    },
+    readerExpandBtn: {
+        padding: 4,
+        marginLeft: 6,
+    },
+    readerQuestionText: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#0f172a',
+        lineHeight: 22,
+        marginBottom: 10,
+    },
+    readerAnswerBox: {
+        backgroundColor: '#f8fafc',
+        borderRadius: 10,
+        padding: 12,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        marginTop: 4,
+    },
+    readerAnswerLabel: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#1b4d3e',
+        letterSpacing: 0.6,
+        marginBottom: 4,
+    },
+    readerAnswerText: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: '#1e293b',
+        lineHeight: 21,
+    },
+    readerHintRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginTop: 8,
+    },
+    readerHintText: {
+        fontSize: 11,
+        color: '#64748b',
+        fontStyle: 'italic',
+    },
+    readerSwitchToCardBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f8fafc',
+        borderWidth: 1,
+        borderColor: '#cbd5e1',
+        borderRadius: 12,
+        paddingVertical: 12,
+        marginTop: 8,
+        marginBottom: 20,
+    },
+    readerSwitchToCardText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#182232',
     },
 });

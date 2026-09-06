@@ -128,6 +128,7 @@ function MainApp() {
     const [allNotes, setAllNotes] = useState<SavedNote[]>([]);
     const [folders, setFolders] = useState<SubjectFolder[]>([]);
     const [refreshKey, setRefreshKey] = useState<number>(0);
+    const [isStudyFocusedReview, setIsStudyFocusedReview] = useState<boolean>(false);
 
     // Transient Tab Toast for visual swipe feedback
     const [activeToast, setActiveToast] = useState<{
@@ -282,7 +283,7 @@ function MainApp() {
             onStartShouldSetPanResponderCapture: () => false,
             onMoveShouldSetPanResponderCapture: () => false,
             onMoveShouldSetPanResponder: (evt, gestureState) => {
-                if (isAnimatingTabRef.current) return false;
+                if (isStudyFocusedReview || isAnimatingTabRef.current) return false;
 
                 // Horizontal swipe across tabs (ensure dominant horizontal intent)
                 const isHorizontalSwipe =
@@ -533,6 +534,7 @@ function MainApp() {
                         folders={folders}
                         onStartReview={() => {}}
                         onSelectNote={handleSelectNote}
+                        onFocusedModeChange={setIsStudyFocusedReview}
                     />
                 )}
 
@@ -583,7 +585,7 @@ function MainApp() {
             )}
 
             {/* Transient Swipe Tab Indicator Toast */}
-            {activeToast && (
+            {!isStudyFocusedReview && activeToast && (
                 <Animated.View
                     style={[
                         styles.tabToastPill,
@@ -617,7 +619,8 @@ function MainApp() {
             <GooeySvgFilter />
 
             {/* CircleMenu: Lucas Bebber circular Gooey Bubble Navigation (Translucent ball at bottom-left auto-collapsing under 25s) */}
-            <CircleMenu
+            {!isStudyFocusedReview && (
+                <CircleMenu
                 items={[
                     {
                         id: 'folders',
@@ -666,6 +669,7 @@ function MainApp() {
                 autoCollapseMs={15000}
                 initialOpen={false}
             />
+            )}
         </View>
     );
 }
