@@ -75,6 +75,15 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
     const openAnim = useRef(new Animated.Value(initialOpen ? 1 : 0)).current;
     const ballAnim = useRef(new Animated.Value(initialOpen ? 0 : 1)).current;
 
+    // Per-item radial dispersal spring animations (inspired by Framer Motion radial spring stagger)
+    const itemSpreadAnims = useRef<Animated.Value[]>(
+        items.map(() => new Animated.Value(initialOpen ? 1 : 0))
+    ).current;
+
+    // Center trigger hub micro-animations (shake & spin on collapse)
+    const triggerShakeAnim = useRef(new Animated.Value(0)).current;
+    const triggerRotateAnim = useRef(new Animated.Value(0)).current;
+
     // 15-second auto-collapse timer
     const autoCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const navCollapseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -92,53 +101,100 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
         }
     }, []);
 
-    // Close / minimize into bottom-left translucent ball
+    // Close / minimize into bottom-left translucent ball with staggered radial retraction & spin
     const closeMenu = useCallback(() => {
         clearCollapseTimer();
+
+        // Staggered retraction of items back to center hub (closeStagger)
+        const itemRetractions = items.map((_, i) =>
+            Animated.spring(itemSpreadAnims[i], {
+                toValue: 0,
+                tension: 130,
+                friction: 9,
+                delay: (items.length - 1 - i) * 26,
+                useNativeDriver: true,
+            })
+        );
+
+        // Center hub subtle shake and -360 rotation during collapse
+        Animated.sequence([
+            Animated.timing(triggerShakeAnim, {
+                toValue: 1,
+                duration: 90,
+                useNativeDriver: true,
+            }),
+            Animated.timing(triggerShakeAnim, {
+                toValue: 0,
+                duration: 60,
+                useNativeDriver: true,
+            }),
+        ]).start();
+
+        Animated.timing(triggerRotateAnim, {
+            toValue: -1,
+            duration: 220,
+            useNativeDriver: true,
+        }).start();
 
         Animated.parallel([
             Animated.timing(openAnim, {
                 toValue: 0,
-                duration: 200,
+                duration: 220,
                 useNativeDriver: true,
             }),
             Animated.spring(ballAnim, {
                 toValue: 1,
-                bounciness: 6,
+                bounciness: 7,
                 speed: 18,
                 useNativeDriver: true,
             }),
+            ...itemRetractions,
         ]).start(() => {
             setIsOpen(false);
             onOpenChange?.(false);
         });
-    }, [ballAnim, clearCollapseTimer, onOpenChange, openAnim]);
+    }, [ballAnim, clearCollapseTimer, itemSpreadAnims, items, onOpenChange, openAnim, triggerRotateAnim, triggerShakeAnim]);
 
-    // Open / expand into big circle dial
+    // Open / expand into big circle dial with radial spring blossom (openStagger)
     const openMenu = useCallback(() => {
         clearCollapseTimer();
         setIsOpen(true);
         onOpenChange?.(true);
 
+        triggerRotateAnim.setValue(0);
+        triggerShakeAnim.setValue(0);
+
+        // Staggered outward radial release of items (openStagger)
+        const itemSprings = items.map((_, i) =>
+            Animated.spring(itemSpreadAnims[i], {
+                toValue: 1,
+                tension: 110,
+                friction: 7,
+                delay: i * 22,
+                useNativeDriver: true,
+            })
+        );
+
         Animated.parallel([
             Animated.spring(openAnim, {
                 toValue: 1,
-                bounciness: 7,
-                speed: 14,
+                tension: 100,
+                friction: 7.5,
                 useNativeDriver: true,
             }),
             Animated.timing(ballAnim, {
                 toValue: 0,
-                duration: 180,
+                duration: 160,
                 useNativeDriver: true,
             }),
+            ...itemSprings,
         ]).start();
 
         // Schedule auto-collapse
         autoCollapseTimerRef.current = setTimeout(() => {
             closeMenu();
         }, autoCollapseMs);
-    }, [autoCollapseMs, ballAnim, clearCollapseTimer, closeMenu, onOpenChange, openAnim]);
+    }, [autoCollapseMs, ballAnim, clearCollapseTimer, closeMenu, itemSpreadAnims, items, onOpenChange, openAnim, triggerRotateAnim, triggerShakeAnim]);
 
     const resetCollapseTimer = useCallback(() => {
         clearCollapseTimer();
@@ -207,15 +263,19 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
         [closeMenu, items, resetCollapseTimer, rotationAngle]
     );
 
-    // Sync rotation on external active tab change (e.g., swipe navigation)
+    // Sync rotation on external active tab change (e.g., swipe navigation between apps)
     useEffect(() => {
         if (activeTabId) {
             const idx = items.findIndex((i) => i.id === activeTabId);
             if (idx !== -1 && idx !== activeIndexRef.current) {
                 rotateToItem(idx, false);
+                // Collapse nav bar as soon as user scrolls/swipes to another app
+                if (isOpenRef.current) {
+                    closeMenu();
+                }
             }
         }
-    }, [activeTabId]);
+    }, [activeTabId, closeMenu, items, rotateToItem]);
 
     // PanResponder for spinning / scrolling the circular wheel
     const panStartAngle = useRef<number>(0);
@@ -330,9 +390,9 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                         styles.ballButton,
                         Platform.OS === 'web'
                             ? ({
-                                  backdropFilter: 'blur(24px)',
-                                  WebkitBackdropFilter: 'blur(24px)',
-                                  boxShadow: '0 8px 24px -4px rgba(15, 23, 42, 0.35), 0 2px 6px rgba(0, 0, 0, 0.1)',
+                                  backdropFilter: 'blur(28px) saturate(190%)',
+                                  WebkitBackdropFilter: 'blur(28px) saturate(190%)',
+                                  boxShadow: '0 8px 28px -4px rgba(15, 23, 42, 0.4), 0 2px 8px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.45)',
                               } as any)
                             : undefined,
                     ]}
@@ -384,9 +444,9 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                         styles.apexLabelBadge,
                         Platform.OS === 'web'
                             ? ({
-                                  backdropFilter: 'blur(24px)',
-                                  WebkitBackdropFilter: 'blur(24px)',
-                                  boxShadow: '0 4px 16px rgba(15, 23, 42, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.25)',
+                                  backdropFilter: 'blur(24px) saturate(180%)',
+                                  WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+                                  boxShadow: '0 4px 16px rgba(15, 23, 42, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3)',
                               } as any)
                             : undefined,
                     ]}
@@ -395,28 +455,30 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                     <Text style={styles.apexLabelText}>{focusedItem.label}</Text>
                 </View>
 
-                {/* Subtle Rotary Dial Guide Ring */}
+                {/* Subtle Rotary Dial Guide Track with crisp HD glass effect */}
                 <View
                     style={[
                         styles.rotaryGuideTrack,
                         Platform.OS === 'web'
                             ? ({
-                                  backdropFilter: 'blur(20px)',
-                                  WebkitBackdropFilter: 'blur(20px)',
-                                  boxShadow: '0 4px 24px rgba(15, 23, 42, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.75)',
+                                  backdropFilter: 'blur(24px) saturate(180%)',
+                                  WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+                                  boxShadow: '0 6px 28px rgba(15, 23, 42, 0.1), inset 0 0 0 1.5px rgba(255, 255, 255, 0.85)',
                               } as any)
                             : undefined,
                     ]}
                     pointerEvents="none"
                 />
 
-                {/* Circular Navigation Nodes distributed evenly around the 360° circle */}
+                {/* Circular Navigation Nodes distributed evenly around the 360° circle with staggered radial spring */}
                 {items.map((item, index) => {
                     // Angle for item index at current rotation
                     // -Math.PI / 2 is the apex (12 o'clock / top position)
                     const theta = -Math.PI / 2 + index * STEP_ANGLE + renderAngle;
-                    const x = RADIUS * Math.cos(theta);
-                    const y = RADIUS * Math.sin(theta);
+                    const cosTheta = Math.cos(theta);
+                    const sinTheta = Math.sin(theta);
+                    const targetX = RADIUS * cosTheta;
+                    const targetY = RADIUS * sinTheta;
 
                     // Angular distance from apex (-Math.PI / 2)
                     const angleFromApex = index * STEP_ANGLE + renderAngle;
@@ -426,24 +488,44 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                     const distToApex = Math.abs(normAngle);
                     const isApex = distToApex < 0.38;
 
-                    // Medium scaling: scan node uses balanced medium curve (peaks at 1.15x instead of 1.28x)
+                    // Medium scaling: scan node uses balanced medium curve
                     const isScan = item.isAccent;
                     const peakScale = isScan ? 0.33 : 0.46;
-                    const scale = 0.82 + peakScale * Math.max(0, 1 - distToApex / 0.85);
+                    const targetApexScale = 0.82 + peakScale * Math.max(0, 1 - distToApex / 0.85);
 
                     // Strictly only ONE item is ever marked as selected (fixes "stat app also selected" bug)
                     const currentActiveId = activeTabId || items[activeIndexRef.current]?.id;
                     const isSelected = item.id === currentActiveId;
 
+                    // Radial spring dispersal interpolation (bursts out from center hub)
+                    const spread = itemSpreadAnims[index] || openAnim;
+                    const transX = spread.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, targetX],
+                    });
+                    const transY = spread.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, targetY],
+                    });
+                    const scale = spread.interpolate({
+                        inputRange: [0, 0.25, 1],
+                        outputRange: [0.15, 0.4, targetApexScale],
+                    });
+                    const opacity = spread.interpolate({
+                        inputRange: [0, 0.15, 1],
+                        outputRange: [0, 0.9, 1],
+                    });
+
                     return (
-                        <View
+                        <Animated.View
                             key={`circle-item-${item.id}`}
                             style={[
                                 styles.itemNode,
                                 {
+                                    opacity,
                                     transform: [
-                                        { translateX: x },
-                                        { translateY: y },
+                                        { translateX: transX },
+                                        { translateY: transY },
                                         { scale },
                                     ],
                                 },
@@ -459,11 +541,13 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                                         : styles.itemBubbleInactive,
                                     Platform.OS === 'web'
                                         ? ({
+                                              backdropFilter: 'blur(24px) saturate(180%)',
+                                              WebkitBackdropFilter: 'blur(24px) saturate(180%)',
                                               boxShadow: isScan
-                                                  ? '0 6px 20px rgba(16, 185, 129, 0.45), 0 2px 6px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.6)'
+                                                  ? '0 8px 24px rgba(16, 185, 129, 0.5), 0 2px 6px rgba(0, 0, 0, 0.14), inset 0 1px 1px rgba(255, 255, 255, 0.7)'
                                                   : isSelected
-                                                  ? '0 6px 20px rgba(15, 23, 42, 0.4), 0 2px 6px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.5)'
-                                                  : '0 4px 12px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.95)',
+                                                  ? '0 8px 24px rgba(15, 23, 42, 0.48), 0 2px 6px rgba(0, 0, 0, 0.22), inset 0 1px 1px rgba(255, 255, 255, 0.6)'
+                                                  : '0 6px 16px rgba(15, 23, 42, 0.1), 0 1px 3px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.98)',
                                           } as any)
                                         : undefined,
                                 ]}
@@ -491,36 +575,57 @@ export const CircleMenu: React.FC<CircleMenuProps> = ({
                                     <View style={styles.activeDot} />
                                 )}
                             </TouchableOpacity>
-                        </View>
+                        </Animated.View>
                     );
                 })}
 
-                {/* Center Hub Trigger Button: Tap to collapse into small ball */}
-                <TouchableOpacity
-                    style={[
-                        styles.centerHubBtn,
-                        Platform.OS === 'web'
-                            ? ({
-                                  backdropFilter: 'blur(20px)',
-                                  WebkitBackdropFilter: 'blur(20px)',
-                                  boxShadow: '0 4px 16px rgba(15, 23, 42, 0.32), inset 0 1px 1px rgba(255, 255, 255, 0.35)',
-                              } as any)
-                            : undefined,
-                    ]}
-                    onPress={closeMenu}
-                    activeOpacity={0.8}
-                    accessibilityRole="button"
-                    accessibilityLabel="Collapse circular menu"
+                {/* Center Hub Trigger Button: Tap to collapse into small ball with shake & spin micro-animation */}
+                <Animated.View
+                    style={{
+                        position: 'absolute',
+                        zIndex: 100,
+                        transform: [
+                            {
+                                translateX: triggerShakeAnim.interpolate({
+                                    inputRange: [0, 0.25, 0.5, 0.75, 1],
+                                    outputRange: [0, -3, 3, -2, 0],
+                                }),
+                            },
+                            {
+                                rotate: triggerRotateAnim.interpolate({
+                                    inputRange: [-1, 0],
+                                    outputRange: ['-360deg', '0deg'],
+                                }),
+                            },
+                        ],
+                    }}
                 >
-                    <Ionicons name="close" size={20} color="#ffffff" />
-                </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[
+                            styles.centerHubBtn,
+                            Platform.OS === 'web'
+                                ? ({
+                                      backdropFilter: 'blur(28px) saturate(190%)',
+                                      WebkitBackdropFilter: 'blur(28px) saturate(190%)',
+                                      boxShadow: '0 4px 20px rgba(15, 23, 42, 0.38), inset 0 1px 1px rgba(255, 255, 255, 0.48)',
+                                  } as any)
+                                : undefined,
+                        ]}
+                        onPress={closeMenu}
+                        activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Collapse circular menu"
+                    >
+                        <Ionicons name="close" size={20} color="#ffffff" />
+                    </TouchableOpacity>
+                </Animated.View>
             </Animated.View>
         </>
     );
 };
 
 const styles = StyleSheet.create({
-    // Collapsed Translucent Ball at Bottom-Left
+    // Collapsed Translucent Ball at Bottom-Left (Ultra HD Glassmorphism)
     ballContainer: {
         position: 'absolute',
         width: 50,
@@ -531,16 +636,16 @@ const styles = StyleSheet.create({
         width: 50,
         height: 50,
         borderRadius: 25,
-        backgroundColor: 'rgba(15, 23, 42, 0.86)',
+        backgroundColor: 'rgba(15, 23, 42, 0.88)',
         borderWidth: 1.5,
-        borderColor: 'rgba(255, 255, 255, 0.38)',
+        borderColor: 'rgba(255, 255, 255, 0.42)',
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#000000',
         shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.28,
-        shadowRadius: 12,
-        elevation: 8,
+        shadowOpacity: 0.32,
+        shadowRadius: 14,
+        elevation: 9,
     },
     ballPulseDot: {
         position: 'absolute',
