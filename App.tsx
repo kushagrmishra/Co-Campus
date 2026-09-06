@@ -248,20 +248,11 @@ function MainApp() {
             onMoveShouldSetPanResponder: (evt, gestureState) => {
                 if (isAnimatingTabRef.current) return false;
 
-                // 1. Horizontal swipe across tabs (ensure dominant horizontal intent)
+                // Horizontal swipe across tabs (ensure dominant horizontal intent)
                 const isHorizontalSwipe =
                     Math.abs(gestureState.dx) > 28 &&
                     Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 2.0;
                 if (isHorizontalSwipe) return true;
-
-                // 2. Swiping up from bottom when nav bar is hidden
-                if (!isNavBarVisibleRef.current) {
-                    const screenHeight = Dimensions.get('window').height;
-                    const startY = gestureState.y0 || evt.nativeEvent.pageY;
-                    if (startY > screenHeight * 0.6 && gestureState.dy < -15) {
-                        return true;
-                    }
-                }
 
                 return false;
             },
@@ -289,20 +280,6 @@ function MainApp() {
             },
             onPanResponderRelease: (evt, gestureState) => {
                 if (isAnimatingTabRef.current) return;
-
-                // Check if swiped up from bottom when nav bar is hidden
-                if (!isNavBarVisibleRef.current) {
-                    const screenHeight = Dimensions.get('window').height;
-                    const startY = gestureState.y0 || evt.nativeEvent.pageY;
-                    if (
-                        (startY > screenHeight * 0.55 || gestureState.moveY > screenHeight * 0.6) &&
-                        gestureState.dy < -15
-                    ) {
-                        revealNavBar();
-                        Animated.spring(dragX, { toValue: 0, speed: 20, useNativeDriver: true }).start();
-                        return;
-                    }
-                }
 
                 // Check for horizontal tab navigation swipe
                 const isHorizontal =
@@ -362,33 +339,24 @@ function MainApp() {
         })
     ).current;
 
-    // Dedicated PanResponder on bottom reveal handle (instant grant & release)
-    const bottomRevealPanResponder = useRef(
-        PanResponder.create({
-            onStartShouldSetPanResponder: () => true,
-            onMoveShouldSetPanResponder: () => true,
-            onPanResponderGrant: () => {
-                revealNavBar();
-            },
-            onPanResponderRelease: () => {
-                revealNavBar();
-            },
-        })
-    ).current;
-
     const navBarTranslateY = navBarAnim.interpolate({
         inputRange: [0, 1],
         outputRange: [0, 115 + insets.bottom],
     });
 
-    const revealHandleOpacity = navBarAnim.interpolate({
-        inputRange: [0, 0.6, 1],
-        outputRange: [0, 0.2, 1],
+    const circleBtnOpacity = navBarAnim.interpolate({
+        inputRange: [0, 0.35, 1],
+        outputRange: [0, 0, 1],
     });
 
-    const revealHandleTranslateY = navBarAnim.interpolate({
+    const circleBtnScale = navBarAnim.interpolate({
         inputRange: [0, 1],
-        outputRange: [24, 0],
+        outputRange: [0.5, 1],
+    });
+
+    const circleBtnTranslateY = navBarAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [20, 0],
     });
 
     useEffect(() => {
@@ -529,7 +497,7 @@ function MainApp() {
     const screenWidth = Dimensions.get('window').width;
 
     return (
-        <View style={styles.appContainer} onTouchStart={revealNavBar}>
+        <View style={styles.appContainer}>
             <StatusBar barStyle="dark-content" backgroundColor="#faf9f6" />
 
             {/* Note Reader or Active Tab Screen Content with Animated Swipe Gestures */}
@@ -663,7 +631,7 @@ function MainApp() {
                 </Animated.View>
             )}
 
-            {/* Animated Bottom Navigation Bar (Auto-hides after 30s) */}
+            {/* Animated Bottom Navigation Bar (Auto-collapses or manual collapse) */}
             <Animated.View
                 style={[
                     styles.navBarContainer,
@@ -674,6 +642,16 @@ function MainApp() {
                 ]}
                 {...navBarPanResponder.panHandlers}
             >
+                {/* Subtle top collapse handle */}
+                <TouchableOpacity
+                    style={styles.navBarCollapseHandle}
+                    onPress={hideNavBar}
+                    activeOpacity={0.75}
+                    accessibilityLabel="Collapse navigation bar"
+                >
+                    <Ionicons name="chevron-down" size={13} color="#75777d" />
+                </TouchableOpacity>
+
                 <View style={styles.navBar}>
                     {/* Folders Tab */}
                     <TouchableOpacity
@@ -773,26 +751,28 @@ function MainApp() {
                 </View>
             </Animated.View>
 
-            {/* Bottom Reveal Handle (Swipe up or tap to reveal hidden nav bar) */}
+            {/* Collapsed Circle Button with Arrow sitting at the bottom */}
             <Animated.View
                 style={[
-                    styles.bottomRevealContainer,
+                    styles.circleArrowContainer,
                     {
-                        bottom: Math.max(insets.bottom, Platform.OS === 'android' ? 10 : 8) + 4,
-                        opacity: revealHandleOpacity,
-                        transform: [{ translateY: revealHandleTranslateY }],
+                        bottom: Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 10) + 6,
+                        opacity: circleBtnOpacity,
+                        transform: [
+                            { scale: circleBtnScale },
+                            { translateY: circleBtnTranslateY },
+                        ],
                     },
                 ]}
                 pointerEvents={isNavBarVisible ? 'none' : 'auto'}
-                {...bottomRevealPanResponder.panHandlers}
             >
                 <TouchableOpacity
-                    style={styles.bottomRevealBtn}
+                    style={styles.circleArrowBtn}
                     onPress={revealNavBar}
-                    activeOpacity={0.85}
+                    activeOpacity={0.82}
+                    accessibilityLabel="Open navigation menu"
                 >
-                    <Ionicons name="chevron-up" size={13} color="#182232" style={{ marginRight: 4 }} />
-                    <Text style={styles.bottomRevealText}>Swipe up for menu</Text>
+                    <Ionicons name="chevron-up" size={22} color="#ffffff" />
                 </TouchableOpacity>
             </Animated.View>
         </View>
@@ -838,7 +818,7 @@ const styles = StyleSheet.create({
         shadowRadius: 8,
         elevation: 8,
     },
-    bottomRevealContainer: {
+    circleArrowContainer: {
         position: 'absolute',
         left: 0,
         right: 0,
@@ -846,26 +826,36 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         zIndex: 90,
     },
-    bottomRevealBtn: {
-        flexDirection: 'row',
+    circleArrowBtn: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: '#182232',
         alignItems: 'center',
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 16,
-        paddingVertical: 7,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: '#e9e8e5',
+        justifyContent: 'center',
         shadowColor: '#182232',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.12,
-        shadowRadius: 6,
-        elevation: 4,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.32,
+        shadowRadius: 10,
+        elevation: 8,
+        borderWidth: 1.5,
+        borderColor: '#3d4759',
     },
-    bottomRevealText: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: '#182232',
-        letterSpacing: 0.2,
+    navBarCollapseHandle: {
+        position: 'absolute',
+        top: -12,
+        alignSelf: 'center',
+        backgroundColor: '#ffffff',
+        width: 34,
+        height: 16,
+        borderTopLeftRadius: 10,
+        borderTopRightRadius: 10,
+        borderWidth: 1,
+        borderBottomWidth: 0,
+        borderColor: '#efeeeb',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 105,
     },
     tabToastPill: {
         position: 'absolute',
