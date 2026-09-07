@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit",
     "build:web": "expo export -p web",
     "deploy:hosting": "expo export -p web && firebase deploy --only hosting",
-    "build:apk": "eas build -p android --profile preview",
-    "build:ipa": "eas build -p ios --profile preview",
-    "update:ota": "eas update --auto"
+    "build:apk": "export $(cat .env | grep EXPO_TOKEN) && eas build -p android --profile preview",
+    "build:ipa": "export $(cat .env | grep EXPO_TOKEN) && eas build -p ios --profile preview",
+    "update:ota": "export $(cat .env | grep EXPO_TOKEN) && eas update --auto"
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.15",
@@ -24,6 +24,7 @@
     "expo-image-picker": "~57.0.16",
     "expo-speech": "~57.0.2",
     "expo-status-bar": "~57.0.1",
+    "expo-updates": "~57.0.21",
     "firebase": "^10.12.0",
     "framer-motion": "^13.2.0",
     "lucide-react": "^1.41.0",

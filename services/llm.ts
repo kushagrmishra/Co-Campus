@@ -1,4 +1,5 @@
 import { ExtractionData, Flashcard, SavedNote, Topic } from '../types';
+import { subjectsMatch } from './storage';
 
 const LLM_API_KEY = process.env.EXPO_PUBLIC_LLM_API_KEY;
 const LLM_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
@@ -298,10 +299,10 @@ const CURATED_MCQS: MCQQuestion[] = [
         correctIndex: 0,
         explanation: 'Since |xy| <= p, the pumped substring y consists entirely of 0s. Pumping y^i disrupts the equal 0/1 balance.',
     },
-    // Discrete Mathematics - Foundations
+    // Discrete Mathematics & Graph Theory - Foundations
     {
         id: 'dm_f_1',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Foundations',
         question: 'What does the Handshaking Lemma state for an undirected graph G = (V, E)?',
         options: [
@@ -315,17 +316,17 @@ const CURATED_MCQS: MCQQuestion[] = [
     },
     {
         id: 'dm_f_2',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Foundations',
         question: 'What is the cardinality of the power set P(S) of a set with n elements?',
         options: ['2^n', 'n^2', '2n', 'n!'],
         correctIndex: 0,
         explanation: 'Each element has 2 independent choices (included or excluded), giving exactly 2^n distinct subsets.',
     },
-    // Discrete Mathematics - Standard
+    // Discrete Mathematics & Graph Theory - Standard
     {
         id: 'dm_s_1',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Standard',
         question: 'Which three mathematical properties define an Equivalence Relation?',
         options: [
@@ -339,7 +340,7 @@ const CURATED_MCQS: MCQQuestion[] = [
     },
     {
         id: 'dm_s_2',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Standard',
         question: 'A simple graph G is bipartite if and only if it satisfies which condition?',
         options: [
@@ -351,10 +352,10 @@ const CURATED_MCQS: MCQQuestion[] = [
         correctIndex: 0,
         explanation: 'König theorem proves that a graph is 2-colorable (bipartite) if and only if every cycle has even length (no odd cycles).',
     },
-    // Discrete Mathematics - Hard
+    // Discrete Mathematics & Graph Theory - Hard
     {
         id: 'dm_h_1',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Hard',
         question: 'Under modular arithmetic, when does an integer a have a multiplicative inverse modulo m?',
         options: [
@@ -365,6 +366,80 @@ const CURATED_MCQS: MCQQuestion[] = [
         ],
         correctIndex: 0,
         explanation: 'By Bézout identity, ax + my = gcd(a, m). A solution for ax = 1 (mod m) exists if and only if gcd(a, m) = 1.',
+    },
+
+    // Biology 101: Cell Energetics - Foundations
+    {
+        id: 'bio_f_1',
+        subject: 'Biology 101: Cell Energetics',
+        level: 'Foundations',
+        question: 'Where within eukaryotic cells does the metabolic process of glycolysis take place?',
+        options: [
+            'In the cytosol (cytoplasm)',
+            'Inside the mitochondrial matrix',
+            'Along the inner mitochondrial cristae',
+            'Inside the Golgi apparatus lumen',
+        ],
+        correctIndex: 0,
+        explanation: 'Glycolysis occurs entirely within the cytosol and does not require oxygen or specialized membrane organelles.',
+    },
+    {
+        id: 'bio_f_2',
+        subject: 'Biology 101: Cell Energetics',
+        level: 'Foundations',
+        question: 'Which molecule acts as the primary reduced electron carrier generated in high quantities during the citric acid cycle?',
+        options: [
+            'NADH (and FADH2)',
+            'NADPH',
+            'Cytochrome C',
+            'Flavin Mononucleotide (FMN)',
+        ],
+        correctIndex: 0,
+        explanation: 'Each turn of the citric acid cycle reduces NAD+ and FAD into 3 NADH and 1 FADH2, carrying high-energy electrons to the ETC.',
+    },
+    // Biology 101: Cell Energetics - Standard
+    {
+        id: 'bio_s_1',
+        subject: 'Biology 101: Cell Energetics',
+        level: 'Standard',
+        question: 'What is the theoretical net ATP yield per oxidized glucose molecule under aerobic respiration in eukaryotic cells?',
+        options: [
+            'Approximately 30 to 32 ATP',
+            'Net 2 ATP',
+            'Exactly 38 ATP in all tissues',
+            'Net 12 ATP',
+        ],
+        correctIndex: 0,
+        explanation: 'Substrate-level phosphorylation plus chemiosmotic oxidative phosphorylation yields approximately 30 to 32 ATP per glucose.',
+    },
+    {
+        id: 'bio_s_2',
+        subject: 'Biology 101: Cell Energetics',
+        level: 'Standard',
+        question: 'Which committed rate-limiting enzyme in glycolysis is allosterically inhibited by elevated cellular ATP and citrate?',
+        options: [
+            'Phosphofructokinase-1 (PFK-1)',
+            'Hexokinase',
+            'Pyruvate Kinase',
+            'Glucose-6-Phosphate Isomerase',
+        ],
+        correctIndex: 0,
+        explanation: 'PFK-1 catalyzes the committed step (fructose-6-P to fructose-1,6-bisP) and is allosterically inhibited by high cellular energy charges.',
+    },
+    // Biology 101: Cell Energetics - Hard
+    {
+        id: 'bio_h_1',
+        subject: 'Biology 101: Cell Energetics',
+        level: 'Hard',
+        question: 'Why does the oxidation of one FADH2 yield fewer ATP equivalents than one NADH in oxidative phosphorylation?',
+        options: [
+            'FADH2 enters the ETC at Complex II, bypassing the first proton-pumping Complex I',
+            'FADH2 cannot donate electrons to Coenzyme Q (ubiquinone)',
+            'FADH2 releases protons directly into the matrix rather than the intermembrane space',
+            'FADH2 requires ATP hydrolysis to transport across the mitochondrial envelope',
+        ],
+        correctIndex: 0,
+        explanation: 'Complex II (Succinate Dehydrogenase) transfers electrons to ubiquinone without pumping protons across the inner membrane, producing a smaller proton motive force.',
     },
 ];
 
@@ -423,22 +498,15 @@ No preambles, no markdown formatting.
         }
     }
 
-    // Filter curated questions by subject & level, or fallback intelligently
+    // Filter curated questions by subject & level using resilient subjectsMatch
     const matching = CURATED_MCQS.filter(
-        (q) =>
-            (q.subject.toLowerCase().includes(subject.toLowerCase()) ||
-                subject.toLowerCase().includes(q.subject.toLowerCase()) ||
-                subject === 'All') &&
-            q.level === level
+        (q) => subjectsMatch(q.subject, subject) && q.level === level
     );
 
     if (matching.length > 0) return matching;
 
     const bySubject = CURATED_MCQS.filter(
-        (q) =>
-            q.subject.toLowerCase().includes(subject.toLowerCase()) ||
-            subject.toLowerCase().includes(q.subject.toLowerCase()) ||
-            subject === 'All'
+        (q) => subjectsMatch(q.subject, subject)
     );
     if (bySubject.length > 0) return bySubject;
 

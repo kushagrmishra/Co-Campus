@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
 import { SavedNote, SubjectFolder } from '../types';
 import { generateMCQs, MCQQuestion } from '../services/llm';
+import { subjectsMatch } from '../services/storage';
 
 interface StudyScreenProps {
     notes?: SavedNote[];
@@ -197,10 +198,10 @@ const CURATED_SUBJECT_FLASHCARDS: DisplayFlashcard[] = [
         noteTitle: 'Turing Machines & Computability',
     },
 
-    // --- Discrete Mathematics (10 Cards) ---
+    // --- Discrete Mathematics & Graph Theory (10 Cards) ---
     {
         id: 'dm_card_1',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Foundations',
         question: 'State the Handshaking Lemma for an undirected graph G = (V, E).',
         answer: 'The sum of all vertex degrees equals twice the number of edges: sum deg(v) = 2|E|.',
@@ -209,7 +210,7 @@ const CURATED_SUBJECT_FLASHCARDS: DisplayFlashcard[] = [
     },
     {
         id: 'dm_card_2',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Foundations',
         question: 'What is the cardinality of the power set P(S) of a set with n elements?',
         answer: '2^n distinct subsets, as each element has 2 independent inclusion choices.',
@@ -218,7 +219,7 @@ const CURATED_SUBJECT_FLASHCARDS: DisplayFlashcard[] = [
     },
     {
         id: 'dm_card_3',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Foundations',
         question: 'What is the Pigeonhole Principle?',
         answer: 'If n items are placed into m containers where n > m, then at least one container must hold more than one item.',
@@ -227,7 +228,7 @@ const CURATED_SUBJECT_FLASHCARDS: DisplayFlashcard[] = [
     },
     {
         id: 'dm_card_4',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Core Concepts',
         question: 'What 3 mathematical properties characterize an Equivalence Relation?',
         answer: 'Reflexive (a R a), Symmetric (a R b implies b R a), and Transitive (a R b and b R c implies a R c).',
@@ -236,7 +237,7 @@ const CURATED_SUBJECT_FLASHCARDS: DisplayFlashcard[] = [
     },
     {
         id: 'dm_card_5',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Core Concepts',
         question: 'What is the necessary and sufficient condition for a connected graph to contain an Euler circuit?',
         answer: 'Every single vertex must have an even degree (0 odd-degree vertices).',
@@ -245,7 +246,7 @@ const CURATED_SUBJECT_FLASHCARDS: DisplayFlashcard[] = [
     },
     {
         id: 'dm_card_6',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Core Concepts',
         question: 'What condition determines whether an undirected graph is bipartite?',
         answer: 'A graph is bipartite if and only if it contains no cycles of odd length (König theorem).',
@@ -254,7 +255,7 @@ const CURATED_SUBJECT_FLASHCARDS: DisplayFlashcard[] = [
     },
     {
         id: 'dm_card_7',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Core Concepts',
         question: 'What are the two fundamental components of a proof by Mathematical Induction?',
         answer: 'The Base Case (verifying base statement P(b) holds) and the Inductive Step (proving P(k) implies P(k+1)).',
@@ -263,7 +264,7 @@ const CURATED_SUBJECT_FLASHCARDS: DisplayFlashcard[] = [
     },
     {
         id: 'dm_card_8',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Exam Mastery',
         question: 'Under what condition does an integer a have a multiplicative inverse modulo m?',
         answer: 'If and only if gcd(a, m) = 1 (a and m are coprime), derived from Bézout identity ax + my = 1.',
@@ -272,7 +273,7 @@ const CURATED_SUBJECT_FLASHCARDS: DisplayFlashcard[] = [
     },
     {
         id: 'dm_card_9',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Exam Mastery',
         question: 'What is Euler Totient function phi(p) for any prime number p?',
         answer: 'phi(p) = p - 1, since all positive integers from 1 to p-1 are coprime to p.',
@@ -281,7 +282,7 @@ const CURATED_SUBJECT_FLASHCARDS: DisplayFlashcard[] = [
     },
     {
         id: 'dm_card_10',
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         level: 'Exam Mastery',
         question: 'State Euler planar graph formula and the edge bound for simple planar graphs.',
         answer: 'Formula: V - E + F = 2. Edge bound for V >= 3: E <= 3V - 6.',
@@ -464,13 +465,27 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
         };
     }, [isFocusedReview, isTimerPaused, isSessionComplete]);
 
-    // Distinct subjects from real folders and notes
+    // Distinct subjects from real folders and notes, guaranteeing core courses
     const availableSubjects = useMemo(() => {
-        const set = new Set<string>();
-        folders.forEach((f) => set.add(f.name));
-        notes.forEach((n) => set.add(n.subject));
-        const list = Array.from(set);
-        return ['All', ...list];
+        const canonicalDefaults = [
+            'Automata Theory',
+            'Graph Theory & Discrete Math',
+            'Biology 101: Cell Energetics',
+        ];
+        const names: string[] = [...canonicalDefaults];
+
+        folders.forEach((f) => {
+            if (!names.some((existing) => subjectsMatch(existing, f.name))) {
+                names.push(f.name);
+            }
+        });
+        notes.forEach((n) => {
+            if (!names.some((existing) => subjectsMatch(existing, n.subject))) {
+                names.push(n.subject);
+            }
+        });
+
+        return ['All', ...names];
     }, [folders, notes]);
 
     // Extract all real flashcards with guaranteed minimum 10 cards per subject
@@ -480,9 +495,8 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                 ? notes
                 : notes.filter(
                       (n) =>
-                          n.subject.toLowerCase().includes(selectedSubject.toLowerCase()) ||
-                          selectedSubject.toLowerCase().includes(n.subject.toLowerCase()) ||
-                          n.subjectSlug.toLowerCase() === selectedSubject.toLowerCase()
+                          subjectsMatch(n.subject, selectedSubject) ||
+                          subjectsMatch(n.subjectSlug, selectedSubject)
                   );
 
         const extracted: DisplayFlashcard[] = [];
@@ -512,8 +526,7 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
         const curatedMatches = CURATED_SUBJECT_FLASHCARDS.filter(
             (c) =>
                 selectedSubject === 'All' ||
-                c.subject.toLowerCase().includes(selectedSubject.toLowerCase()) ||
-                selectedSubject.toLowerCase().includes(c.subject.toLowerCase())
+                subjectsMatch(c.subject, selectedSubject)
         );
 
         // If extracted has fewer than 10 cards, supplement from curated bank
@@ -556,7 +569,8 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                 .filter(
                     (n) =>
                         selectedSubject === 'All' ||
-                        n.subject.toLowerCase() === selectedSubject.toLowerCase()
+                        subjectsMatch(n.subject, selectedSubject) ||
+                        subjectsMatch(n.subjectSlug, selectedSubject)
                 )
                 .map((n) => `${n.title}\n${n.extraction.generatedNotes}`)
                 .join('\n\n');

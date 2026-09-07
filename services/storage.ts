@@ -28,11 +28,11 @@ export function slugify(text: string): string {
 export const SAMPLE_NOTE: SavedNote = {
     id: 'sample_note_cellular_respiration',
     createdAt: Date.now() - 1000 * 60 * 60 * 3, // 3 hours ago
-    subject: 'Biology 101',
+    subject: 'Biology 101: Cell Energetics',
     subjectSlug: 'bio-101',
     title: 'Cellular Respiration: Glycolysis & Krebs Cycle',
     extraction: {
-        subject: 'Biology 101',
+        subject: 'Biology 101: Cell Energetics',
         title: 'Cellular Respiration: Glycolysis & Krebs Cycle',
         generatedNotes:
             'Glycolysis occurs in the cytoplasm, is anaerobic, and converts 1 Glucose into 2 Pyruvate yielding net 2 ATP & 2 NADH. Pyruvate dehydrogenase complex then bridges glycolysis to the mitochondrial matrix, forming Acetyl-CoA. The Krebs (Citric Acid) Cycle processes Acetyl-CoA through an 8-step catalytic cycle producing 3 NADH, 1 FADH₂, 1 GTP/ATP, and 2 CO₂ per turn (doubled per glucose).',
@@ -275,11 +275,11 @@ export const AUTOMATA_NOTE: SavedNote = {
 export const DISCRETE_NOTE: SavedNote = {
     id: 'note_discrete_math_graphs',
     createdAt: Date.now() - 1000 * 60 * 60 * 5, // 5 hours ago
-    subject: 'Discrete Mathematics',
+    subject: 'Graph Theory & Discrete Math',
     subjectSlug: 'discrete-mathematics',
     title: 'Graph Theory & Combinatorial Proofs',
     extraction: {
-        subject: 'Discrete Mathematics',
+        subject: 'Graph Theory & Discrete Math',
         title: 'Graph Theory & Combinatorial Proofs',
         generatedNotes:
             'A graph G = (V, E) consists of vertices and edges. The Handshaking Lemma states that the sum of degrees of all vertices equals twice the number of edges. An Eulerian circuit exists in a connected graph if and only if every vertex has an even degree.',
@@ -369,7 +369,7 @@ export const DISCRETE_NOTE: SavedNote = {
     ],
 };
 
-const DEFAULT_FOLDERS: SubjectFolder[] = [
+export const DEFAULT_FOLDERS: SubjectFolder[] = [
     {
         id: 'automata-theory',
         name: 'Automata Theory',
@@ -379,7 +379,7 @@ const DEFAULT_FOLDERS: SubjectFolder[] = [
     },
     {
         id: 'discrete-mathematics',
-        name: 'Discrete Mathematics',
+        name: 'Graph Theory & Discrete Math',
         noteCount: 1,
         examTag: 'Exam in 12 days',
         updatedAt: Date.now() - 1000 * 60 * 60 * 5,
@@ -388,32 +388,96 @@ const DEFAULT_FOLDERS: SubjectFolder[] = [
         id: 'bio-101',
         name: 'Biology 101: Cell Energetics',
         noteCount: 1,
+        examTag: 'Exam in 18 days',
         updatedAt: Date.now() - 1000 * 60 * 60 * 24,
     },
 ];
 
-const INITIAL_SEED_NOTES: SavedNote[] = [AUTOMATA_NOTE, DISCRETE_NOTE, SAMPLE_NOTE];
+export const INITIAL_SEED_NOTES: SavedNote[] = [AUTOMATA_NOTE, DISCRETE_NOTE, SAMPLE_NOTE];
+
+export function subjectsMatch(a?: string | null, b?: string | null): boolean {
+    if (!a || !b) return false;
+    if (a === 'All' || b === 'All') return true;
+    const lowerA = a.toLowerCase().trim();
+    const lowerB = b.toLowerCase().trim();
+    if (lowerA === lowerB) return true;
+    if (lowerA.includes(lowerB) || lowerB.includes(lowerA)) return true;
+
+    // Biology matchers
+    const isBioA = lowerA.includes('bio') || lowerA.includes('cellular') || lowerA.includes('respiration');
+    const isBioB = lowerB.includes('bio') || lowerB.includes('cellular') || lowerB.includes('respiration');
+    if (isBioA && isBioB) return true;
+
+    // Graph Theory / Discrete Math matchers
+    const isGraphA = lowerA.includes('graph') || lowerA.includes('discrete');
+    const isGraphB = lowerB.includes('graph') || lowerB.includes('discrete');
+    if (isGraphA && isGraphB) return true;
+
+    // Automata Theory matchers
+    const isAutoA = lowerA.includes('auto') || lowerA.includes('dfa') || lowerA.includes('pumping');
+    const isAutoB = lowerB.includes('auto') || lowerB.includes('dfa') || lowerB.includes('pumping');
+    if (isAutoA && isAutoB) return true;
+
+    return false;
+}
 
 async function getLocalNotes(): Promise<SavedNote[]> {
     try {
         const json = await AsyncStorage.getItem(STORAGE_KEY_NOTES);
+        let currentNotes: SavedNote[] = [];
         if (json) {
-            const parsed = JSON.parse(json);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                // Ensure default seed notes have their full 10-card suite if previously cached with fewer cards
-                const updated = parsed.map((n: SavedNote) => {
-                    const seed = INITIAL_SEED_NOTES.find((s) => s.id === n.id);
-                    if (seed && (!n.flashcards || n.flashcards.length < 10)) {
-                        return { ...n, flashcards: seed.flashcards };
-                    }
-                    return n;
-                });
-                return updated;
+            try {
+                const parsed = JSON.parse(json);
+                if (Array.isArray(parsed)) {
+                    currentNotes = parsed;
+                }
+            } catch {
+                currentNotes = [];
             }
         }
-        // Seed default sample notes if storage is empty
-        await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(INITIAL_SEED_NOTES));
-        return INITIAL_SEED_NOTES;
+
+        const existingIds = new Set(currentNotes.map((n) => n.id));
+        let changed = false;
+
+        // Guarantee all seed notes (Automata, Graph Theory, Biology) are preserved and up to date
+        for (const seed of INITIAL_SEED_NOTES) {
+            if (!existingIds.has(seed.id)) {
+                currentNotes.push(seed);
+                existingIds.add(seed.id);
+                changed = true;
+            } else {
+                const idx = currentNotes.findIndex((n) => n.id === seed.id);
+                if (idx !== -1) {
+                    const existing = currentNotes[idx];
+                    if (
+                        !existing.flashcards ||
+                        existing.flashcards.length < 10 ||
+                        existing.subject !== seed.subject ||
+                        !existing.topicVideos ||
+                        existing.topicVideos.length === 0
+                    ) {
+                        currentNotes[idx] = {
+                            ...existing,
+                            subject: seed.subject,
+                            subjectSlug: seed.subjectSlug,
+                            title: seed.title,
+                            flashcards: seed.flashcards,
+                            topicVideos: seed.topicVideos || existing.topicVideos,
+                            extraction: {
+                                ...existing.extraction,
+                                subject: seed.subject,
+                            },
+                        };
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if (changed || !json) {
+            await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(currentNotes));
+        }
+        return currentNotes;
     } catch {
         return INITIAL_SEED_NOTES;
     }
@@ -495,14 +559,59 @@ async function saveNoteLocally(noteData: SavedNote): Promise<void> {
 async function getLocalFolders(): Promise<SubjectFolder[]> {
     try {
         const json = await AsyncStorage.getItem(STORAGE_KEY_FOLDERS);
+        let currentFolders: SubjectFolder[] = [];
         if (json) {
-            const parsed = JSON.parse(json);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed;
+            try {
+                const parsed = JSON.parse(json);
+                if (Array.isArray(parsed)) {
+                    currentFolders = parsed;
+                }
+            } catch {
+                currentFolders = [];
             }
         }
-        await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(DEFAULT_FOLDERS));
-        return DEFAULT_FOLDERS;
+
+        const existingIds = new Set(currentFolders.map((f) => f.id));
+        let changed = false;
+
+        // Guarantee all default folders (Automata, Graph Theory, Biology) exist
+        for (const defaultFolder of DEFAULT_FOLDERS) {
+            if (!existingIds.has(defaultFolder.id)) {
+                currentFolders.push(defaultFolder);
+                existingIds.add(defaultFolder.id);
+                changed = true;
+            } else {
+                const idx = currentFolders.findIndex((f) => f.id === defaultFolder.id);
+                if (idx !== -1) {
+                    const cur = currentFolders[idx];
+                    if (cur.name !== defaultFolder.name || !cur.examTag) {
+                        currentFolders[idx] = {
+                            ...cur,
+                            name: defaultFolder.name,
+                            examTag: cur.examTag || defaultFolder.examTag,
+                        };
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        // Recompute note counts dynamically based on local notes
+        const notes = await getLocalNotes();
+        for (const f of currentFolders) {
+            const count = notes.filter(
+                (n) => subjectsMatch(n.subjectSlug, f.id) || subjectsMatch(n.subject, f.name)
+            ).length;
+            if (f.noteCount !== count) {
+                f.noteCount = count;
+                changed = true;
+            }
+        }
+
+        if (changed || !json) {
+            await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(currentFolders));
+        }
+        return currentFolders;
     } catch {
         return DEFAULT_FOLDERS;
     }
@@ -644,7 +753,12 @@ export async function fetchSubjectFolders(): Promise<SubjectFolder[]> {
 
 export async function fetchNotesBySubject(subjectSlug: string): Promise<SavedNote[]> {
     const allLocalNotes = await getLocalNotes();
-    const localSubjectNotes = allLocalNotes.filter((n) => n.subjectSlug === subjectSlug);
+    const localSubjectNotes = allLocalNotes.filter(
+        (n) =>
+            n.subjectSlug === subjectSlug ||
+            subjectsMatch(n.subjectSlug, subjectSlug) ||
+            subjectsMatch(n.subject, subjectSlug)
+    );
 
     try {
         const user = await ensureAnonymousAuth();
@@ -667,4 +781,38 @@ export async function fetchNotesBySubject(subjectSlug: string): Promise<SavedNot
     }
 
     return localSubjectNotes;
+}
+
+export async function forceRefreshStorage(): Promise<{ notes: SavedNote[]; folders: SubjectFolder[] }> {
+    try {
+        // Ensure local items are thoroughly reconciled
+        const localNotes = await getLocalNotes();
+        const localFolders = await getLocalFolders();
+
+        // Push all seed notes and folders to Firebase if available
+        try {
+            const user = await ensureAnonymousAuth();
+            if (user && db) {
+                const userId = user.uid;
+                for (const folder of localFolders) {
+                    const subjectDocRef = doc(db, `users/${userId}/subjects/${folder.id}`);
+                    await setDoc(subjectDocRef, folder, { merge: true });
+                }
+                for (const note of localNotes) {
+                    const noteDocRef = doc(db, `users/${userId}/subjects/${note.subjectSlug}/notes/${note.id}`);
+                    await setDoc(noteDocRef, note, { merge: true });
+                }
+            }
+        } catch (firebaseErr) {
+            console.warn('Firebase sync during force refresh skipped:', firebaseErr);
+        }
+
+        await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(localNotes));
+        await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(localFolders));
+
+        return { notes: localNotes, folders: localFolders };
+    } catch (e) {
+        console.error('Failed to force refresh storage:', e);
+        return { notes: INITIAL_SEED_NOTES, folders: DEFAULT_FOLDERS };
+    }
 }

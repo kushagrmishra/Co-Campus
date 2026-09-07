@@ -26,6 +26,7 @@ import {
     fetchNotesBySubject,
     createSubjectFolder,
     updateFolderExam,
+    forceRefreshStorage,
     SAMPLE_NOTE,
     AUTOMATA_NOTE,
     DISCRETE_NOTE,
@@ -55,27 +56,27 @@ const DEFAULT_SUBJECTS: Array<{
         name: 'Automata Theory',
         examTag: 'Exam in 4 days',
         noteCount: 1,
-        cardCount: 8,
+        cardCount: 10,
         color: '#082015',
         bg: '#cde9d8',
     },
     {
-        code: 'DISCRETE',
-        name: 'Discrete Mathematics',
+        code: 'GRAPH-TH',
+        name: 'Graph Theory & Discrete Math',
         examTag: 'Exam in 12 days',
         noteCount: 1,
-        cardCount: 8,
+        cardCount: 10,
         color: '#331100',
         bg: '#ffdbca',
     },
     {
-        code: 'MATH 152',
-        name: 'Calculus II: Series',
-        examTag: 'Exam in 20 days',
+        code: 'BIO 101',
+        name: 'Biology 101: Cell Energetics',
+        examTag: 'Exam in 18 days',
         noteCount: 1,
-        cardCount: 8,
-        color: '#121c2c',
-        bg: '#d9e3f9',
+        cardCount: 10,
+        color: '#0e381b',
+        bg: '#d2ebd9',
     },
 ];
 
@@ -167,9 +168,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         loadData();
     }, [loadData]);
 
-    const onRefresh = () => {
+    const onRefresh = async () => {
         setRefreshing(true);
-        loadData();
+        try {
+            await forceRefreshStorage();
+        } catch (e) {
+            console.warn('Storage refresh error:', e);
+        }
+        await loadData();
     };
 
     const handleFolderTap = (folder: SubjectFolder) => {
@@ -456,9 +462,27 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         <Ionicons name="folder-outline" size={18} color="#182232" style={{ marginRight: 6 }} />
                         <Text style={styles.sectionTitle}>Subject Folders</Text>
                     </View>
-                    <TouchableOpacity onPress={() => setShowCreateModal(true)}>
-                        <Text style={styles.manageText}>+ New ({folders.length})</Text>
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <TouchableOpacity
+                            onPress={async () => {
+                                setRefreshing(true);
+                                try {
+                                    await forceRefreshStorage();
+                                } catch (e) {
+                                    console.warn('Storage refresh error:', e);
+                                }
+                                await loadData();
+                            }}
+                            style={{ flexDirection: 'row', alignItems: 'center' }}
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons name="refresh" size={13} color="#4b6456" style={{ marginRight: 3 }} />
+                            <Text style={styles.manageText}>Refresh</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => setShowCreateModal(true)}>
+                            <Text style={styles.manageText}>+ New ({folders.length})</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 <View style={styles.foldersGrid}>

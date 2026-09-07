@@ -8,7 +8,11 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.cocampus.app"
+      "bundleIdentifier": "com.cocampus.app",
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -27,6 +31,12 @@
         "projectId": "fb6d4a58-9de9-4f9e-a047-0d3c5c4391b5"
       }
     },
-    "owner": "maker_fan4"
+    "owner": "maker_fan4",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/fb6d4a58-9de9-4f9e-a047-0d3c5c4391b5"
+    }
   }
 }
