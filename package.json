@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit",
     "build:web": "expo export -p web",
     "deploy:hosting": "expo export -p web && firebase deploy --only hosting",
-    "build:apk": "export $(cat .env | grep EXPO_TOKEN) && eas build -p android --profile preview",
-    "build:ipa": "export $(cat .env | grep EXPO_TOKEN) && eas build -p ios --profile preview",
-    "update:ota": "export $(cat .env | grep EXPO_TOKEN) && eas update --auto"
+    "build:apk": "dotenv -e .env -- eas build -p android --profile preview",
+    "build:ipa": "dotenv -e .env -- eas build -p ios --profile preview",
+    "update:ota": "dotenv -e .env -- eas update --auto"
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.15",
@@ -41,6 +41,7 @@
     "@expo/ngrok": "^4.1.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
+    "dotenv-cli": "^11.0.0",
     "eas-cli": "^23.2.0",
     "firebase-tools": "^15.29.0",
     "typescript": "~6.0.3"

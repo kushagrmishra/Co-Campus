@@ -79,12 +79,14 @@ co-campus/
 
 ## Installation & Prerequisites
 
+> 🪟 **Developing on Windows?** See the step-by-step [Windows Setup Guide](WINDOWS_SETUP.md) for PowerShell configuration, Android emulator setup, and cross-platform build commands.
+
 ### 1. Prerequisites
 
 Before setting up co-campus, ensure you have the following installed on your machine:
 
-- Node.js (v18.0.0 or higher)
-- npm (v9.0.0 or higher) or yarn
+- Node.js (v18.0.0 or higher, LTS v20/v22 recommended)
+- npm (v9.0.0 or higher)
 - Expo Go installed on your iOS (App Store) or Android (Play Store) device for testing, or an initialized simulator (Xcode / Android Studio)
 
 ### 2. Clone the Repository
