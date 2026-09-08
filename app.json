@@ -11,7 +11,8 @@
       "bundleIdentifier": "com.cocampus.app",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSMicrophoneUsageDescription": "CoCampus needs access to your microphone to allow voice questions with your study copilot."
       }
     },
     "android": {
@@ -19,13 +20,18 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#121212"
       },
-      "package": "com.cocampus.app"
+      "package": "com.cocampus.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [],
+    "plugins": [
+      "expo-audio"
+    ],
     "extra": {
       "eas": {
         "projectId": "fb6d4a58-9de9-4f9e-a047-0d3c5c4391b5"

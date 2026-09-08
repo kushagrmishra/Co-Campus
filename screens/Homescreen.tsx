@@ -24,10 +24,11 @@ import { SubjectFolder, SavedNote } from '../types';
 import {
     fetchSubjectFolders,
     fetchNotesBySubject,
+    fetchAllLocalNotes,
     createSubjectFolder,
+    deleteSubjectFolder,
     updateFolderExam,
     forceRefreshStorage,
-    SAMPLE_NOTE,
     AUTOMATA_NOTE,
     DISCRETE_NOTE,
 } from '../services/storage';
@@ -68,15 +69,6 @@ const DEFAULT_SUBJECTS: Array<{
         cardCount: 10,
         color: '#331100',
         bg: '#ffdbca',
-    },
-    {
-        code: 'BIO 101',
-        name: 'Biology 101: Cell Energetics',
-        examTag: 'Exam in 18 days',
-        noteCount: 1,
-        cardCount: 10,
-        color: '#0e381b',
-        bg: '#d2ebd9',
     },
 ];
 
@@ -146,14 +138,30 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 const fetchedFolders = await fetchSubjectFolders();
                 setFolders(fetchedFolders);
 
-                // Collect recent notes from all folders
-                const recentCollector: SavedNote[] = [];
+                // Collect all local notes & notes from fetched folders so none are missed
+                const localNotes = await fetchAllLocalNotes();
+                const map = new Map<string, SavedNote>();
+                for (const n of localNotes) {
+                    map.set(n.id, n);
+                }
+
                 for (const f of fetchedFolders.slice(0, 5)) {
                     const subNotes = await fetchNotesBySubject(f.id);
-                    recentCollector.push(...subNotes);
+                    for (const n of subNotes) {
+                        const existing = map.get(n.id);
+                        map.set(n.id, {
+                            ...existing,
+                            ...n,
+                            imageUris:
+                                n.imageUris && n.imageUris.length > 0
+                                    ? n.imageUris
+                                    : existing?.imageUris || undefined,
+                        });
+                    }
                 }
-                recentCollector.sort((a, b) => b.createdAt - a.createdAt);
-                setAllRecentNotes(recentCollector);
+
+                const sorted = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+                setAllRecentNotes(sorted);
             }
         } catch (err) {
             console.error('Error fetching data:', err);
@@ -199,6 +207,41 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         } catch (e: any) {
             Alert.alert('Error', e.message || 'Failed to create folder');
         }
+    };
+
+    const handleFolderOptions = (folder: SubjectFolder) => {
+        Alert.alert(
+            folder.name,
+            'Folder Actions',
+            [
+                {
+                    text: 'Open Folder',
+                    onPress: () => handleFolderTap(folder),
+                },
+                {
+                    text: 'Delete Folder',
+                    style: 'destructive',
+                    onPress: () => {
+                        Alert.alert(
+                            'Delete Subject Folder',
+                            `Are you sure you want to delete "${folder.name}" and all of its notes? This action cannot be undone.`,
+                            [
+                                { text: 'Cancel', style: 'cancel' },
+                                {
+                                    text: 'Delete',
+                                    style: 'destructive',
+                                    onPress: async () => {
+                                        await deleteSubjectFolder(folder.id);
+                                        await loadData();
+                                    },
+                                },
+                            ]
+                        );
+                    },
+                },
+                { text: 'Cancel', style: 'cancel' },
+            ]
+        );
     };
 
     const handleSelectTerm = async (term: string) => {
@@ -313,6 +356,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 onScanNote={(f) => onScanPress(f)}
                 onOpenNote={(n) => onSelectNote(n)}
                 onPracticeCards={(n) => onSelectNote(n)}
+                onDeleteFolder={async () => {
+                    handleBackToFolders();
+                    await loadData();
+                }}
             />
         );
     }
@@ -486,118 +533,86 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 </View>
 
                 <View style={styles.foldersGrid}>
-                    {folders.length > 0
-                        ? folders.map((folder, index) => {
-                              const fallbackPreset = DEFAULT_SUBJECTS[index % DEFAULT_SUBJECTS.length];
-                              return (
-                                  <TouchableOpacity
-                                      key={folder.id}
-                                      style={styles.folderCard}
-                                      onPress={() => handleFolderTap(folder)}
-                                      activeOpacity={0.9}
-                                  >
-                                      <View style={styles.folderCardTop}>
-                                          <View style={styles.folderLeftContent}>
-                                              <View
-                                                  style={[
-                                                      styles.folderIconBox,
-                                                      { backgroundColor: fallbackPreset.bg },
-                                                  ]}
-                                              >
-                                                  <Ionicons
-                                                      name="school-outline"
-                                                      size={20}
-                                                      color={fallbackPreset.color}
-                                                  />
-                                              </View>
-                                              <View style={styles.folderTitleWrap}>
-                                                  <View style={styles.courseTagRow}>
-                                                      <Text style={styles.courseCode}>
-                                                          {folder.id.substring(0, 8).toUpperCase()}
-                                                      </Text>
-                                                      {folder.examTag && (
-                                                          <View style={styles.examTagPill}>
-                                                              <Text style={styles.examTagText}>
-                                                                  {folder.examTag}
-                                                              </Text>
-                                                          </View>
-                                                      )}
-                                                  </View>
-                                                  <Text style={styles.folderTitleText}>{folder.name}</Text>
-                                              </View>
-                                          </View>
-                                          <Ionicons name="ellipsis-vertical" size={16} color="#75777d" />
-                                      </View>
+                    {folders.length > 0 ? (
+                        folders.map((folder, index) => {
+                            const fallbackPreset = DEFAULT_SUBJECTS[index % DEFAULT_SUBJECTS.length];
+                            return (
+                                <TouchableOpacity
+                                    key={folder.id}
+                                    style={styles.folderCard}
+                                    onPress={() => handleFolderTap(folder)}
+                                    onLongPress={() => handleFolderOptions(folder)}
+                                    activeOpacity={0.9}
+                                >
+                                    <View style={styles.folderCardTop}>
+                                        <View style={styles.folderLeftContent}>
+                                            <View
+                                                style={[
+                                                    styles.folderIconBox,
+                                                    { backgroundColor: fallbackPreset?.bg || '#cde9d8' },
+                                                ]}
+                                            >
+                                                <Ionicons
+                                                    name="school-outline"
+                                                    size={20}
+                                                    color={fallbackPreset?.color || '#082015'}
+                                                />
+                                            </View>
+                                            <View style={styles.folderTitleWrap}>
+                                                <View style={styles.courseTagRow}>
+                                                    <Text style={styles.courseCode}>
+                                                        {folder.id.substring(0, 8).toUpperCase()}
+                                                    </Text>
+                                                    {folder.examTag && (
+                                                        <View style={styles.examTagPill}>
+                                                            <Text style={styles.examTagText}>
+                                                                {folder.examTag}
+                                                            </Text>
+                                                        </View>
+                                                    )}
+                                                </View>
+                                                <Text style={styles.folderTitleText}>{folder.name}</Text>
+                                            </View>
+                                        </View>
+                                        <TouchableOpacity
+                                            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                                            onPress={() => handleFolderOptions(folder)}
+                                        >
+                                            <Ionicons name="ellipsis-vertical" size={18} color="#75777d" />
+                                        </TouchableOpacity>
+                                    </View>
 
-                                      <View style={styles.folderCardBottom}>
-                                          <View style={styles.folderStatsRow}>
-                                              <View style={styles.statItemRow}>
-                                                  <Ionicons name="document-text-outline" size={13} color="#75777d" />
-                                                  <Text style={styles.folderStatItem}>
-                                                      {folder.noteCount} notes
-                                                  </Text>
-                                              </View>
-                                              <View style={styles.statItemRow}>
-                                                  <Ionicons name="card-outline" size={13} color="#75777d" />
-                                                  <Text style={styles.folderStatItem}>
-                                                      {(folder.noteCount || 1) * 8} cards
-                                                  </Text>
-                                              </View>
-                                          </View>
-                                          <Ionicons name="arrow-forward" size={15} color="#4b6456" />
-                                      </View>
-                                  </TouchableOpacity>
-                              );
-                          })
-                        : DEFAULT_SUBJECTS.map((preset) => (
-                              <TouchableOpacity
-                                  key={preset.code}
-                                  style={styles.folderCard}
-                                  onPress={async () => {
-                                      const created = await createSubjectFolder(preset.name);
-                                      handleFolderTap(created);
-                                  }}
-                                  activeOpacity={0.9}
-                              >
-                                  <View style={styles.folderCardTop}>
-                                      <View style={styles.folderLeftContent}>
-                                          <View style={[styles.folderIconBox, { backgroundColor: preset.bg }]}>
-                                              <Ionicons
-                                                  name="school-outline"
-                                                  size={20}
-                                                  color={preset.color}
-                                              />
-                                          </View>
-                                          <View style={styles.folderTitleWrap}>
-                                              <View style={styles.courseTagRow}>
-                                                  <Text style={styles.courseCode}>{preset.code}</Text>
-                                                  {preset.examTag && (
-                                                      <View style={styles.examTagPill}>
-                                                          <Text style={styles.examTagText}>{preset.examTag}</Text>
-                                                      </View>
-                                                  )}
-                                              </View>
-                                              <Text style={styles.folderTitleText}>{preset.name}</Text>
-                                          </View>
-                                      </View>
-                                      <Ionicons name="ellipsis-vertical" size={16} color="#75777d" />
-                                  </View>
-
-                                  <View style={styles.folderCardBottom}>
-                                      <View style={styles.folderStatsRow}>
-                                          <View style={styles.statItemRow}>
-                                              <Ionicons name="document-text-outline" size={13} color="#75777d" />
-                                              <Text style={styles.folderStatItem}>{preset.noteCount} notes</Text>
-                                          </View>
-                                          <View style={styles.statItemRow}>
-                                              <Ionicons name="card-outline" size={13} color="#75777d" />
-                                              <Text style={styles.folderStatItem}>{preset.cardCount} cards</Text>
-                                          </View>
-                                      </View>
-                                      <Ionicons name="arrow-forward" size={15} color="#4b6456" />
-                                  </View>
-                              </TouchableOpacity>
-                          ))}
+                                    <View style={styles.folderCardBottom}>
+                                        <View style={styles.folderStatsRow}>
+                                            <View style={styles.statItemRow}>
+                                                <Ionicons name="document-text-outline" size={13} color="#75777d" />
+                                                <Text style={styles.folderStatItem}>
+                                                    {folder.noteCount} notes
+                                                </Text>
+                                            </View>
+                                            <View style={styles.statItemRow}>
+                                                <Ionicons name="card-outline" size={13} color="#75777d" />
+                                                <Text style={styles.folderStatItem}>
+                                                    {(folder.noteCount || 1) * 8} cards
+                                                </Text>
+                                            </View>
+                                        </View>
+                                        <Ionicons name="arrow-forward" size={15} color="#4b6456" />
+                                    </View>
+                                </TouchableOpacity>
+                            );
+                        })
+                    ) : (
+                        <View style={styles.emptyFolderState}>
+                            <View style={styles.emptyFolderIconBox}>
+                                <Ionicons name="folder-open-outline" size={26} color="#4b6456" />
+                            </View>
+                            <Text style={styles.emptyFolderTitle}>No Subject Folders</Text>
+                            <Text style={styles.emptyFolderSubtitle}>
+                                All folders have been removed. Tap below to create a new subject folder anytime.
+                            </Text>
+                        </View>
+                    )}
 
                     {/* Create Subject Folder Button */}
                     <TouchableOpacity
@@ -1366,6 +1381,39 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#75777d',
         fontWeight: '500',
+    },
+    emptyFolderState: {
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        paddingVertical: 24,
+        paddingHorizontal: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: '#edebe6',
+        marginBottom: 8,
+    },
+    emptyFolderIconBox: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: '#ebf4ee',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 10,
+    },
+    emptyFolderTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#182232',
+        marginBottom: 4,
+    },
+    emptyFolderSubtitle: {
+        fontSize: 12,
+        color: '#75777d',
+        textAlign: 'center',
+        lineHeight: 17,
+        maxWidth: 270,
     },
     createFolderDashedCard: {
         flexDirection: 'row',

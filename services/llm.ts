@@ -6,6 +6,84 @@ const LLM_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
 
 const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
 
+const OPENROUTER_API_KEY = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY;
+const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_VISION_MODEL = 'google/gemini-3.5-flash-lite';
+const OPENROUTER_TEXT_MODEL = 'google/gemini-3.5-flash-lite';
+
+/** OpenRouter vision call (OpenAI-compatible format) */
+async function callOpenRouterVision(
+    promptText: string,
+    base64Images: string[],
+    temperature: number = 0.2
+): Promise<string> {
+    if (!OPENROUTER_API_KEY) throw new Error('OpenRouter API key not configured.');
+
+    const content: any[] = [{ type: 'text', text: promptText }];
+    for (const img of base64Images) {
+        content.push({
+            type: 'image_url',
+            image_url: { url: `data:image/jpeg;base64,${img}` },
+        });
+    }
+
+    const response = await fetch(OPENROUTER_ENDPOINT, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            'HTTP-Referer': 'https://cocampus.app',
+            'X-Title': 'CoCampus',
+        },
+        body: JSON.stringify({
+            model: OPENROUTER_VISION_MODEL,
+            temperature,
+            max_tokens: 4096,
+            messages: [{ role: 'user', content }],
+        }),
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`OpenRouter request failed (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || '';
+}
+
+/** OpenRouter text-only call */
+async function callOpenRouterText(
+    promptText: string,
+    temperature: number = 0.3
+): Promise<string> {
+    if (!OPENROUTER_API_KEY) throw new Error('OpenRouter API key not configured.');
+
+    const response = await fetch(OPENROUTER_ENDPOINT, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            'HTTP-Referer': 'https://cocampus.app',
+            'X-Title': 'CoCampus',
+        },
+        body: JSON.stringify({
+            model: OPENROUTER_TEXT_MODEL,
+            temperature,
+            max_tokens: 4096,
+            messages: [{ role: 'user', content: promptText }],
+        }),
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`OpenRouter text request failed (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || '';
+}
+
 function sanitizeJsonResponse(rawText: string): string {
     let cleaned = rawText.trim();
     if (cleaned.startsWith('```json')) {
@@ -16,18 +94,57 @@ function sanitizeJsonResponse(rawText: string): string {
     return cleaned;
 }
 
+/**
+ * Transcribe an audio file using Groq Whisper API (whisper-large-v3-turbo).
+ * Accepts a native local file URI or web Blob.
+ */
+export async function transcribeAudio(audioUriOrBlob: string | Blob): Promise<string> {
+    if (!LLM_API_KEY) {
+        throw new Error('LLM API key (Groq) is not configured for audio transcription.');
+    }
+
+    const formData = new FormData();
+    if (typeof audioUriOrBlob === 'string') {
+        formData.append('file', {
+            uri: audioUriOrBlob,
+            name: 'audio.m4a',
+            type: 'audio/m4a',
+        } as any);
+    } else {
+        formData.append('file', audioUriOrBlob, 'audio.webm');
+    }
+    formData.append('model', 'whisper-large-v3-turbo');
+    formData.append('language', 'en');
+
+    const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${LLM_API_KEY}`,
+        },
+        body: formData,
+    });
+
+    if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Whisper transcription failed (${res.status}): ${errText}`);
+    }
+
+    const data = await res.json();
+    return data.text ? data.text.trim() : '';
+}
+
 export async function extractStudyMaterial(
     base64Images: string[] | string,
     targetSubject?: string,
     existingExtraction?: ExtractionData
 ): Promise<ExtractionData> {
-    if (!GEMINI_API_KEY) {
-        throw new Error('EXPO_PUBLIC_GEMINI_API_KEY is not configured in environment variables.');
-    }
-
     const images = Array.isArray(base64Images) ? base64Images : [base64Images];
     if (images.length === 0) {
         throw new Error('At least one image is required for analysis.');
+    }
+
+    if (!OPENROUTER_API_KEY && !GEMINI_API_KEY) {
+        throw new Error('No LLM provider configured. Set EXPO_PUBLIC_OPENROUTER_API_KEY or EXPO_PUBLIC_GEMINI_API_KEY.');
     }
 
     const subjectInstruction = targetSubject
@@ -61,48 +178,51 @@ Constraints:
 - "generatedNotes" should read like a cohesive written summary, synthesizing all pages, not just a bullet dump.
 `;
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
+    let rawContent = '';
 
-    const parts: any[] = [{ text: promptText }];
-    for (const img of images) {
-        parts.push({
-            inlineData: {
-                mimeType: 'image/jpeg',
-                data: img,
-            },
+    // 1. Try OpenRouter first (higher quota)
+    if (OPENROUTER_API_KEY) {
+        try {
+            rawContent = await callOpenRouterVision(promptText, images, 0.2);
+        } catch (orErr) {
+            console.warn('OpenRouter vision failed, trying Gemini fallback:', orErr);
+        }
+    }
+
+    // 2. Fallback to Gemini direct
+    if (!rawContent && GEMINI_API_KEY) {
+        const parts: any[] = [{ text: promptText }];
+        for (const img of images) {
+            parts.push({ inlineData: { mimeType: 'image/jpeg', data: img } });
+        }
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const response = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts }],
+                generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+            }),
         });
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Gemini Vision Request Failed (${response.status}): ${errText}`);
+        }
+        const data = await response.json();
+        rawContent = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     }
 
-    const response = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [
-                {
-                    parts,
-                },
-            ],
-            generationConfig: {
-                temperature: 0.2,
-                responseMimeType: 'application/json',
-            },
-        }),
-    });
-
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Gemini Vision Request Failed (${response.status}): ${errText}`);
+    if (!rawContent) {
+        throw new Error('All LLM providers failed. Check your API keys and quotas.');
     }
 
-    const data = await response.json();
-    const rawContent =
-        data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed: ExtractionData = JSON.parse(sanitizeJsonResponse(rawContent));
     if (targetSubject) {
         parsed.subject = targetSubject;
     }
     return parsed;
 }
+
 
 export async function generateFlashcards(extraction: ExtractionData): Promise<Flashcard[]> {
     if (!LLM_API_KEY) {
@@ -156,8 +276,8 @@ export interface ExtractedExamInfo {
 }
 
 export async function extractExamFromSyllabus(base64Image: string): Promise<ExtractedExamInfo> {
-    if (!GEMINI_API_KEY) {
-        throw new Error('EXPO_PUBLIC_GEMINI_API_KEY is not configured in environment variables.');
+    if (!OPENROUTER_API_KEY && !GEMINI_API_KEY) {
+        throw new Error('No LLM provider configured.');
     }
 
     const promptText = `
@@ -179,37 +299,33 @@ Return ONLY a JSON object:
 No preambles, no markdown blocks.
 `;
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
+    let candidate = '';
 
-    const response = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [
-                {
-                    parts: [
-                        { text: promptText },
-                        {
-                            inlineData: {
-                                mimeType: 'image/jpeg',
-                                data: base64Image,
-                            },
-                        },
-                    ],
-                },
-            ],
-        }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Gemini Syllabus Analysis failed with status ${response.status}`);
+    // 1. Try OpenRouter
+    if (OPENROUTER_API_KEY) {
+        try {
+            candidate = await callOpenRouterVision(promptText, [base64Image], 0.2);
+        } catch (e) {
+            console.warn('OpenRouter syllabus failed, trying Gemini:', e);
+        }
     }
 
-    const result = await response.json();
-    const candidate = result.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!candidate) {
-        throw new Error('No response returned from syllabus analysis.');
+    // 2. Fallback to Gemini
+    if (!candidate && GEMINI_API_KEY) {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const response = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: 'image/jpeg', data: base64Image } }] }],
+            }),
+        });
+        if (!response.ok) throw new Error(`Gemini Syllabus Analysis failed (${response.status})`);
+        const result = await response.json();
+        candidate = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
     }
+
+    if (!candidate) throw new Error('No response from any LLM provider for syllabus analysis.');
 
     const parsed = JSON.parse(sanitizeJsonResponse(candidate));
     return {
@@ -448,8 +564,8 @@ export async function generateMCQs(
     level: 'Foundations' | 'Standard' | 'Hard',
     noteText?: string
 ): Promise<MCQQuestion[]> {
-    // Check if Gemini can generate bespoke MCQs from note context
-    if (GEMINI_API_KEY && noteText && noteText.trim().length > 30) {
+    // Generate MCQs via LLM (OpenRouter first, then Gemini)
+    if ((OPENROUTER_API_KEY || GEMINI_API_KEY) && noteText && noteText.trim().length > 30) {
         try {
             const prompt = `
 Generate 4 multiple-choice exam practice questions (MCQ) for the subject "${subject}" at difficulty level "${level}".
@@ -466,35 +582,50 @@ Return ONLY a JSON array of questions strictly following this structure:
 ]
 No preambles, no markdown formatting.
 `;
-            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
-            const response = await fetch(geminiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.3, responseMimeType: 'application/json' },
-                }),
-            });
-            if (response.ok) {
-                const resData = await response.json();
-                const rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (rawText) {
-                    const parsed = JSON.parse(sanitizeJsonResponse(rawText));
-                    if (Array.isArray(parsed) && parsed.length > 0) {
-                        return parsed.map((item, idx) => ({
-                            id: `ai_mcq_${Date.now()}_${idx}`,
-                            subject,
-                            level,
-                            question: item.question,
-                            options: item.options || ['A', 'B', 'C', 'D'],
-                            correctIndex: typeof item.correctIndex === 'number' ? item.correctIndex : 0,
-                            explanation: item.explanation || 'Verified correct choice based on course principles.',
-                        }));
-                    }
+            let rawText = '';
+
+            // Try OpenRouter first
+            if (OPENROUTER_API_KEY) {
+                try {
+                    rawText = await callOpenRouterText(prompt, 0.3);
+                } catch (e) {
+                    console.warn('OpenRouter MCQ failed, trying Gemini:', e);
+                }
+            }
+
+            // Fallback to Gemini
+            if (!rawText && GEMINI_API_KEY) {
+                const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
+                const response = await fetch(geminiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        generationConfig: { temperature: 0.3, responseMimeType: 'application/json' },
+                    }),
+                });
+                if (response.ok) {
+                    const resData = await response.json();
+                    rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                }
+            }
+
+            if (rawText) {
+                const parsed = JSON.parse(sanitizeJsonResponse(rawText));
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    return parsed.map((item, idx) => ({
+                        id: `ai_mcq_${Date.now()}_${idx}`,
+                        subject,
+                        level,
+                        question: item.question,
+                        options: item.options || ['A', 'B', 'C', 'D'],
+                        correctIndex: typeof item.correctIndex === 'number' ? item.correctIndex : 0,
+                        explanation: item.explanation || 'Verified correct choice based on course principles.',
+                    }));
                 }
             }
         } catch (e) {
-            console.warn('Gemini MCQ generation fallback to curated bank:', e);
+            console.warn('MCQ generation fallback to curated bank:', e);
         }
     }
 
@@ -517,10 +648,8 @@ export async function askNoteAiDirectly(note: SavedNote, question: string): Prom
     const trimmed = question.trim();
     if (!trimmed) return 'Please ask a question about your lecture notes.';
 
-    // 1. Try Gemini API if key is available
-    if (GEMINI_API_KEY) {
-        try {
-            const prompt = `
+    // 1. Try OpenRouter first, then Gemini
+    const qaPrompt = `
 You are the CoCampus Collegiate AI Study Copilot. Answer the student's question directly, accurately, and concisely based strictly on their lecture notes.
 
 Course Subject: ${note.subject}
@@ -540,24 +669,34 @@ Instructions:
 - Keep the response between 2 to 4 concise paragraphs or bullet points.
 - Do NOT use raw emojis. Keep styling strictly text and bullets.
 `;
+
+    if (OPENROUTER_API_KEY) {
+        try {
+            const answer = await callOpenRouterText(qaPrompt, 0.3);
+            if (answer && answer.trim().length > 0) return answer.trim();
+        } catch (e) {
+            console.warn('OpenRouter Q&A failed, trying Gemini:', e);
+        }
+    }
+
+    if (GEMINI_API_KEY) {
+        try {
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
             const response = await fetch(geminiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
+                    contents: [{ parts: [{ text: qaPrompt }] }],
                     generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
                 }),
             });
             if (response.ok) {
                 const resData = await response.json();
                 const answer = resData.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (answer && answer.trim().length > 0) {
-                    return answer.trim();
-                }
+                if (answer && answer.trim().length > 0) return answer.trim();
             }
         } catch (e) {
-            console.warn('Gemini direct Q&A failed, falling back to local synthesis:', e);
+            console.warn('Gemini Q&A failed, falling back to local synthesis:', e);
         }
     }
 

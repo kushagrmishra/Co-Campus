@@ -18,9 +18,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
+import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync } from 'expo-audio';
 import { SavedNote, YouTubeVideo } from '../types';
 import { getCuratedClipsForSubject } from '../services/youtube';
-import { askNoteAiDirectly } from '../services/llm';
+import { askNoteAiDirectly, transcribeAudio } from '../services/llm';
 
 interface ResultsScreenProps {
     note: SavedNote;
@@ -62,6 +63,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     const aiSectionYRef = useRef<number>(0);
     const recognitionRef = useRef<any>(null);
     const isListeningRef = useRef<boolean>(false);
+    const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
     // Mic Pulsing and Waveform loop
     useEffect(() => {
@@ -205,40 +207,48 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         [note, questionInput, isPlayingAudio, isPlayingAnswerVoice]
     );
 
-    const provideVoiceFallback = useCallback(() => {
-        setListeningStatus('Listening for voice... (Speak now)');
-        const timer = setTimeout(() => {
-            if (isListeningRef.current) {
-                const sampleQuestions = [
-                    `Summarize the key exam takeaways from ${note?.subject || 'this lecture'}.`,
-                    `What are the most likely test questions for ${note?.title || 'this topic'}?`,
-                    `Explain the primary concepts and formulas step-by-step.`,
-                ];
-                const chosen = sampleQuestions[Math.floor(Math.random() * sampleQuestions.length)];
-                setListeningStatus(`Recognized: "${chosen}"`);
-                setQuestionInput(chosen);
-                setTimeout(() => {
-                    if (isListeningRef.current) {
-                        isListeningRef.current = false;
-                        setIsListening(false);
-                        handleAskAi(chosen);
-                    }
-                }, 900);
+    const handleStopMic = useCallback(async () => {
+        if (!isListeningRef.current) return;
+        isListeningRef.current = false;
+        setIsListening(false);
+
+        // Web Speech Recognition
+        if (recognitionRef.current) {
+            try {
+                recognitionRef.current.stop();
+            } catch {}
+            recognitionRef.current = null;
+            return;
+        }
+
+        // Native Audio Recorder -> Groq Whisper transcription
+        try {
+            setListeningStatus('Transcribing your speech with AI...');
+            await recorder.stop();
+            const uri = recorder.uri;
+            if (uri) {
+                const transcribedText = await transcribeAudio(uri);
+                if (transcribedText && transcribedText.trim().length > 0) {
+                    setQuestionInput(transcribedText);
+                    setListeningStatus(`Heard: "${transcribedText}"`);
+                    handleAskAi(transcribedText);
+                } else {
+                    setListeningStatus('No speech recognized. Tap mic to speak.');
+                    setTimeout(() => setListeningStatus(''), 3000);
+                }
+            } else {
+                setListeningStatus('');
             }
-        }, 2000);
-        return timer;
-    }, [handleAskAi, note]);
+        } catch (err: any) {
+            console.warn('Transcription error:', err);
+            setListeningStatus('Transcription unavailable. You can type your question.');
+            setTimeout(() => setListeningStatus(''), 3500);
+        }
+    }, [recorder, handleAskAi]);
 
     const handleToggleMic = useCallback(async () => {
         if (isListeningRef.current) {
-            isListeningRef.current = false;
-            setIsListening(false);
-            setListeningStatus('');
-            if (recognitionRef.current) {
-                try {
-                    recognitionRef.current.stop();
-                } catch {}
-            }
+            await handleStopMic();
             return;
         }
 
@@ -247,32 +257,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             scrollViewRef.current.scrollTo({ y: Math.max(0, aiSectionYRef.current - 20), animated: true });
         }
 
-        isListeningRef.current = true;
-        setIsListening(true);
-        setListeningStatus('Requesting microphone access...');
-
-        // Check Web Speech API support
+        // 1. Check Web Speech API support first for browser
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            // Request explicit browser mic permission first so user sees the permission prompt
-            if (navigator?.mediaDevices?.getUserMedia) {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach((t) => t.stop());
-                } catch (err: any) {
-                    console.warn('Microphone permission error:', err);
-                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                        isListeningRef.current = false;
-                        setIsListening(false);
-                        setListeningStatus('Microphone blocked. Please allow mic in browser.');
-                        Alert.alert(
-                            'Microphone Blocked',
-                            'Please allow microphone permissions in your browser address bar to ask questions using voice.'
-                        );
-                        return;
-                    }
-                }
-            }
-
             const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
             if (SpeechRec) {
                 try {
@@ -282,13 +268,12 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                     rec.lang = 'en-US';
 
                     rec.onstart = () => {
-                        if (isListeningRef.current) {
-                            setListeningStatus('Listening... Speak your academic question now');
-                        }
+                        isListeningRef.current = true;
+                        setIsListening(true);
+                        setListeningStatus('Listening... Speak your question now');
                     };
 
                     rec.onresult = (evt: any) => {
-                        if (!isListeningRef.current) return;
                         const transcript = Array.from(evt.results)
                             .map((r: any) => r[0].transcript)
                             .join('');
@@ -303,28 +288,21 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
                     rec.onerror = (evt: any) => {
                         console.warn('Speech recognition error event:', evt?.error);
+                        isListeningRef.current = false;
+                        setIsListening(false);
                         if (evt?.error === 'no-speech') {
                             setListeningStatus('No speech heard. Tap mic to try again.');
-                            setTimeout(() => {
-                                if (isListeningRef.current) {
-                                    isListeningRef.current = false;
-                                    setIsListening(false);
-                                }
-                            }, 1800);
                         } else if (evt?.error === 'not-allowed') {
-                            isListeningRef.current = false;
-                            setIsListening(false);
                             setListeningStatus('Mic permission denied in browser.');
                         } else {
-                            provideVoiceFallback();
+                            setListeningStatus('');
                         }
+                        setTimeout(() => setListeningStatus(''), 3000);
                     };
 
                     rec.onend = () => {
-                        if (isListeningRef.current) {
-                            isListeningRef.current = false;
-                            setIsListening(false);
-                        }
+                        isListeningRef.current = false;
+                        setIsListening(false);
                     };
 
                     rec.start();
@@ -336,9 +314,32 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             }
         }
 
-        // Realistic academic voice recognition fallback
-        provideVoiceFallback();
-    }, [handleAskAi, provideVoiceFallback]);
+        // 2. Native Expo Audio recording
+        try {
+            const perm = await requestRecordingPermissionsAsync();
+            if (!perm.granted) {
+                setListeningStatus('Microphone permission required.');
+                Alert.alert(
+                    'Microphone Permission Needed',
+                    'Please allow microphone access in your device settings to speak your study questions.'
+                );
+                return;
+            }
+
+            isListeningRef.current = true;
+            setIsListening(true);
+            setListeningStatus('Listening... Speak now (Tap mic or "Done Speaking" when finished)');
+
+            await recorder.prepareToRecordAsync();
+            recorder.record();
+        } catch (recErr: any) {
+            console.warn('Audio recording failed to start:', recErr);
+            isListeningRef.current = false;
+            setIsListening(false);
+            setListeningStatus('Could not access microphone. Please type your question.');
+            setTimeout(() => setListeningStatus(''), 3500);
+        }
+    }, [handleStopMic, recorder, handleAskAi]);
 
     const handleToggleAnswerVoice = async () => {
         if (isPlayingAnswerVoice) {
@@ -500,6 +501,40 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                             </Text>
                         </TouchableOpacity>
                     </View>
+
+                    {/* Inline Whiteboard / Captured Snapshots Horizontal Carousel */}
+                    {note.imageUris && note.imageUris.length > 0 && (
+                        <View style={styles.inlineSnapshotsWrap}>
+                            <View style={styles.inlineSnapshotsHeader}>
+                                <View style={styles.inlineSnapshotsTitleRow}>
+                                    <Ionicons name="camera" size={13} color="#4b6456" style={{ marginRight: 5 }} />
+                                    <Text style={styles.inlineSnapshotsTitle}>Whiteboard & Document Photos</Text>
+                                </View>
+                                <TouchableOpacity onPress={() => setShowPhotosModal(true)}>
+                                    <Text style={styles.inlineSnapshotsAction}>View All ({note.imageUris.length})</Text>
+                                </TouchableOpacity>
+                            </View>
+                            <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.inlineSnapshotsScroll}
+                            >
+                                {note.imageUris.map((uri, idx) => (
+                                    <TouchableOpacity
+                                        key={idx}
+                                        style={styles.inlineSnapCard}
+                                        onPress={() => setShowPhotosModal(true)}
+                                        activeOpacity={0.9}
+                                    >
+                                        <Image source={{ uri }} style={styles.inlineSnapImg} />
+                                        <View style={styles.inlineSnapBadge}>
+                                            <Text style={styles.inlineSnapBadgeText}>Page {idx + 1}</Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        </View>
+                    )}
                 </View>
 
                 {/* Executive AI Digest */}
@@ -581,10 +616,10 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                             <Text style={styles.listeningStatusText}>{listeningStatus}</Text>
                             <TouchableOpacity
                                 style={styles.listeningStopPill}
-                                onPress={() => setIsListening(false)}
+                                onPress={handleStopMic}
                             >
                                 <Ionicons name="stop" size={11} color="#ffffff" style={{ marginRight: 3 }} />
-                                <Text style={styles.listeningStopText}>Stop</Text>
+                                <Text style={styles.listeningStopText}>Done Speaking</Text>
                             </TouchableOpacity>
                         </View>
                     )}
@@ -624,10 +659,10 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                         contentContainerStyle={styles.quickPromptsScroll}
                     >
                         {[
-                            'Explain DFA in plain English',
-                            'What is the formal 5-tuple?',
-                            'Key exam traps & proofs',
-                            'Summarize in 3 bullet points',
+                            `Summarize ${note.subject || 'lecture'}`,
+                            'Key exam takeaways',
+                            'Explain core concepts',
+                            'Important definitions & formulas',
                         ].map((prompt, pIdx) => (
                             <TouchableOpacity
                                 key={pIdx}
@@ -1972,5 +2007,63 @@ const styles = StyleSheet.create({
         shadowColor: '#10b981',
         shadowOpacity: 0.58,
         shadowRadius: 16,
+    },
+    inlineSnapshotsWrap: {
+        marginTop: 14,
+        marginBottom: 4,
+    },
+    inlineSnapshotsHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    inlineSnapshotsTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    inlineSnapshotsTitle: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#45474c',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    inlineSnapshotsAction: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#4b6456',
+    },
+    inlineSnapshotsScroll: {
+        gap: 10,
+        paddingRight: 10,
+    },
+    inlineSnapCard: {
+        width: 140,
+        height: 96,
+        borderRadius: 10,
+        overflow: 'hidden',
+        position: 'relative',
+        backgroundColor: '#e9e8e5',
+        borderWidth: 1,
+        borderColor: '#e1e3e1',
+    },
+    inlineSnapImg: {
+        width: '100%',
+        height: '100%',
+    },
+    inlineSnapBadge: {
+        position: 'absolute',
+        bottom: 6,
+        left: 6,
+        backgroundColor: 'rgba(24, 34, 50, 0.72)',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+    },
+    inlineSnapBadgeText: {
+        color: '#ffffff',
+        fontSize: 10,
+        fontWeight: '700',
     },
 });

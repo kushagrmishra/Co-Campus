@@ -14,7 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { SubjectFolder, SavedNote } from '../types';
-import { SAMPLE_NOTE } from '../services/storage';
+import { deleteSubjectFolder } from '../services/storage';
 
 interface FolderDetailScreenProps {
     folder: SubjectFolder;
@@ -23,6 +23,7 @@ interface FolderDetailScreenProps {
     onScanNote: (folder: SubjectFolder) => void;
     onOpenNote: (note: SavedNote) => void;
     onPracticeCards: (note: SavedNote) => void;
+    onDeleteFolder?: (folder: SubjectFolder) => void;
 }
 
 export const FolderDetailScreen: React.FC<FolderDetailScreenProps> = ({
@@ -32,6 +33,7 @@ export const FolderDetailScreen: React.FC<FolderDetailScreenProps> = ({
     onScanNote,
     onOpenNote,
     onPracticeCards,
+    onDeleteFolder,
 }) => {
     const insets = useSafeAreaInsets();
     const topPadding = Platform.OS === 'android' ? Math.max(insets.top, StatusBar.currentHeight || 0, 16) : Math.max(insets.top, 12);
@@ -40,6 +42,29 @@ export const FolderDetailScreen: React.FC<FolderDetailScreenProps> = ({
     const [showMenu, setShowMenu] = useState<boolean>(false);
 
     const courseCode = (folder.id || 'SUBJ').substring(0, 8).toUpperCase();
+
+    const handleDeleteFolder = () => {
+        setShowMenu(false);
+        Alert.alert(
+            'Delete Subject Folder',
+            `Are you sure you want to remove "${folder.name}" and all its saved notes? This action cannot be undone.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        await deleteSubjectFolder(folder.id);
+                        if (onDeleteFolder) {
+                            onDeleteFolder(folder);
+                        } else {
+                            onBack();
+                        }
+                    },
+                },
+            ]
+        );
+    };
 
     return (
         <View style={[styles.container, { paddingTop: topPadding }]}>
@@ -116,6 +141,16 @@ export const FolderDetailScreen: React.FC<FolderDetailScreenProps> = ({
                         >
                             <Ionicons name="download-outline" size={16} color="#45474c" />
                             <Text style={styles.menuItemText}>Export PDF Binder</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.menuItem, { borderTopWidth: 1, borderTopColor: '#e9e8e5' }]}
+                            onPress={handleDeleteFolder}
+                        >
+                            <Ionicons name="trash-outline" size={16} color="#ba1a1a" />
+                            <Text style={[styles.menuItemText, { color: '#ba1a1a', fontWeight: '600' }]}>
+                                Delete Folder
+                            </Text>
                         </TouchableOpacity>
                     </View>
                 </TouchableOpacity>

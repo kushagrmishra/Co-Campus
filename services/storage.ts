@@ -5,6 +5,7 @@ import {
     getDoc,
     setDoc,
     updateDoc,
+    deleteDoc,
     increment,
     query,
     orderBy,
@@ -24,145 +25,6 @@ export function slugify(text: string): string {
         .replace(/[\s_-]+/g, '-')
         .replace(/^-+|-+$/g, '');
 }
-
-export const SAMPLE_NOTE: SavedNote = {
-    id: 'sample_note_cellular_respiration',
-    createdAt: Date.now() - 1000 * 60 * 60 * 3, // 3 hours ago
-    subject: 'Biology 101: Cell Energetics',
-    subjectSlug: 'bio-101',
-    title: 'Cellular Respiration: Glycolysis & Krebs Cycle',
-    extraction: {
-        subject: 'Biology 101: Cell Energetics',
-        title: 'Cellular Respiration: Glycolysis & Krebs Cycle',
-        generatedNotes:
-            'Glycolysis occurs in the cytoplasm, is anaerobic, and converts 1 Glucose into 2 Pyruvate yielding net 2 ATP & 2 NADH. Pyruvate dehydrogenase complex then bridges glycolysis to the mitochondrial matrix, forming Acetyl-CoA. The Krebs (Citric Acid) Cycle processes Acetyl-CoA through an 8-step catalytic cycle producing 3 NADH, 1 FADH₂, 1 GTP/ATP, and 2 CO₂ per turn (doubled per glucose).',
-        rawText:
-            'BIO 101 Lecture 8 - Cellular Respiration\nPFK-1 allosteric regulation\nComplex IV reduces O2 to H2O\nNet ATP: ~30-32',
-        topics: [
-            {
-                heading: 'Glycolysis Pathway (Cytosol)',
-                bullets: [
-                    'Energy investment phase consumes 2 ATP (Hexokinase & PFK-1 checkpoints).',
-                    'Payoff phase produces 4 ATP and 2 NADH through substrate-level phosphorylation.',
-                    'Net yield: +2 ATP, +2 NADH, +2 Pyruvate per oxidized glucose monomer.',
-                ],
-            },
-            {
-                heading: 'The Krebs (Citric Acid) Cycle',
-                bullets: [
-                    'Oxaloacetate (4C) binds Acetyl-CoA (2C) via Citrate Synthase to form Citrate (6C).',
-                    'Rate-limiting enzyme: Isocitrate Dehydrogenase (inhibited by high ATP and NADH).',
-                    'Succinate Dehydrogenase (Complex II) embeds directly in the inner mitochondrial membrane.',
-                    'Malate dehydrogenase regenerates oxaloacetate to complete the catalytic cycle.',
-                ],
-            },
-            {
-                heading: 'Oxidative Phosphorylation Bridge',
-                bullets: [
-                    'Electrons from NADH & FADH₂ pass through Complexes I-IV, creating a proton gradient.',
-                    'Complex IV reduces terminal electron acceptor O₂ to H₂O.',
-                    'Chemiosmosis powers ATP Synthase rotation to yield ~30-32 ATP per glucose.',
-                ],
-            },
-        ],
-        tasks: [
-            {
-                title: 'Complete WileyPLUS Biology Quiz #4',
-                dueDate: 'Friday, Oct 27 at 11:59 PM',
-                notes: '15 questions covering glycolysis and citric acid cycle enzymes',
-            },
-            {
-                title: 'Memorize 8 Intermediates Mnemonic',
-                dueDate: null,
-                notes: '"Can I Keep Selling Substances For Money, Officer?"',
-            },
-            {
-                title: 'Review lecture slides 14-29',
-                dueDate: null,
-                notes: 'Focus on complex IV oxygen reduction and proton pumping',
-            },
-        ],
-    },
-    flashcards: [
-        {
-            question: 'What is the primary electron acceptor in glycolysis?',
-            answer: 'NAD+ (Nicotinamide Adenine Dinucleotide), which reduces to NADH.',
-        },
-        {
-            question: 'What is the committed, major rate-limiting enzyme in glycolysis?',
-            answer: 'Phosphofructokinase-1 (PFK-1), allosterically inhibited by high ATP and citrate.',
-        },
-        {
-            question: 'Where does the citric acid cycle take place within eukaryotic cells?',
-            answer: 'In the mitochondrial matrix.',
-        },
-        {
-            question: 'What is the theoretical net ATP yield per glucose molecule under aerobic respiration?',
-            answer: 'Approximately 30 to 32 ATP molecules.',
-        },
-        {
-            question: 'Which enzyme catalyzes the condensation of oxaloacetate and acetyl-CoA into citrate?',
-            answer: 'Citrate Synthase.',
-        },
-        {
-            question: 'What is the net ATP yield from one cycle of the Krebs cycle per turn?',
-            answer: '1 GTP (or ATP) per acetyl-CoA, meaning 2 ATP equivalents per original glucose.',
-        },
-        {
-            question: 'Which molecule acts as the terminal electron acceptor in the electron transport chain?',
-            answer: 'Molecular Oxygen (O2), which is reduced to water (H2O).',
-        },
-        {
-            question: 'What is chemiosmosis in cellular respiration?',
-            answer: 'The movement of protons (H+) down their electrochemical gradient across the inner mitochondrial membrane through ATP synthase to produce ATP.',
-        },
-        {
-            question: 'What happens to pyruvate in the absence of oxygen in human muscle cells?',
-            answer: 'It undergoes lactic acid fermentation, reducing pyruvate to lactate while regenerating NAD+ for continued glycolysis.',
-        },
-        {
-            question: 'Why does FADH2 yield less ATP than NADH in oxidative phosphorylation?',
-            answer: 'FADH2 donates electrons to Complex II (Succinate Dehydrogenase) instead of Complex I, bypassing the first proton-pumping complex.',
-        },
-    ],
-    topicVideos: [
-        {
-            heading: 'Cellular Respiration & Krebs Cycle',
-            videos: [
-                {
-                    id: 'juM2ROSLWfw',
-                    title: 'Krebs / Citric Acid Cycle Step-by-Step',
-                    channelTitle: 'Khan Academy',
-                    thumbnail: 'https://i.ytimg.com/vi/juM2ROSLWfw/hqdefault.jpg',
-                    duration: '14:22',
-                    views: '4.2M views',
-                    description: 'Clear breakdown of NADH and FADH2 production per acetyl-CoA molecule.',
-                },
-                {
-                    id: '00jbG_cfGuQ',
-                    title: 'ATP & Respiration: Crash Course Biology #7',
-                    channelTitle: 'CrashCourse',
-                    thumbnail: 'https://i.ytimg.com/vi/00jbG_cfGuQ/hqdefault.jpg',
-                    duration: '11:45',
-                    views: '6.8M views',
-                    description: 'Hank Green covers the big picture of how ATP synthase powers cellular energy.',
-                },
-                {
-                    id: 'TnQGcKpahfM',
-                    title: 'Glycolysis Made Easy!',
-                    channelTitle: 'Dr Matt & Dr Mike',
-                    thumbnail: 'https://i.ytimg.com/vi/TnQGcKpahfM/hqdefault.jpg',
-                    duration: '13:30',
-                    views: '1.1M views',
-                    description: 'In this video, Dr Mike breaks down glycolysis clearly step by step.',
-                },
-            ],
-        },
-    ],
-    imageUris: [
-        'https://images.unsplash.com/photo-1532094349884-543bc11b234d?auto=format&fit=crop&w=800&q=80',
-    ],
-};
 
 export const AUTOMATA_NOTE: SavedNote = {
     id: 'note_automata_theory_dfa',
@@ -270,6 +132,10 @@ export const AUTOMATA_NOTE: SavedNote = {
             ],
         },
     ],
+    imageUris: [
+        'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1000&q=80',
+        'https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=1000&q=80',
+    ],
 };
 
 export const DISCRETE_NOTE: SavedNote = {
@@ -367,6 +233,10 @@ export const DISCRETE_NOTE: SavedNote = {
             ],
         },
     ],
+    imageUris: [
+        'https://images.unsplash.com/photo-1509869175650-a1c97972541a?auto=format&fit=crop&w=1000&q=80',
+        'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1000&q=80',
+    ],
 };
 
 export const DEFAULT_FOLDERS: SubjectFolder[] = [
@@ -384,16 +254,9 @@ export const DEFAULT_FOLDERS: SubjectFolder[] = [
         examTag: 'Exam in 12 days',
         updatedAt: Date.now() - 1000 * 60 * 60 * 5,
     },
-    {
-        id: 'bio-101',
-        name: 'Biology 101: Cell Energetics',
-        noteCount: 1,
-        examTag: 'Exam in 18 days',
-        updatedAt: Date.now() - 1000 * 60 * 60 * 24,
-    },
 ];
 
-export const INITIAL_SEED_NOTES: SavedNote[] = [AUTOMATA_NOTE, DISCRETE_NOTE, SAMPLE_NOTE];
+export const INITIAL_SEED_NOTES: SavedNote[] = [AUTOMATA_NOTE, DISCRETE_NOTE];
 
 export function subjectsMatch(a?: string | null, b?: string | null): boolean {
     if (!a || !b) return false;
@@ -436,11 +299,35 @@ async function getLocalNotes(): Promise<SavedNote[]> {
             }
         }
 
-        const existingIds = new Set(currentNotes.map((n) => n.id));
-        let changed = false;
+        const deletedFoldersJson = await AsyncStorage.getItem('@cocampus_deleted_folder_ids');
+        const deletedFolderIds: string[] = deletedFoldersJson ? JSON.parse(deletedFoldersJson) : [];
+        const deletedIdsSet = new Set(deletedFolderIds.map((s) => s.toLowerCase()));
 
-        // Guarantee all seed notes (Automata, Graph Theory, Biology) are preserved and up to date
+        let changed = false;
+        // Purge deleted sample note if it exists in local storage
+        if (currentNotes.some((n) => n.id === 'sample_note_cellular_respiration')) {
+            currentNotes = currentNotes.filter((n) => n.id !== 'sample_note_cellular_respiration');
+            changed = true;
+        }
+
+        const existingIds = new Set(currentNotes.map((n) => n.id));
+
+        // Guarantee all seed notes (Automata, Graph Theory) are preserved unless their folder was deleted
         for (const seed of INITIAL_SEED_NOTES) {
+            const isFolderDeleted =
+                deletedIdsSet.has(seed.subjectSlug.toLowerCase()) ||
+                deletedIdsSet.has(slugify(seed.subject).toLowerCase()) ||
+                deletedIdsSet.has(seed.subject.toLowerCase());
+
+            if (isFolderDeleted) {
+                if (existingIds.has(seed.id)) {
+                    currentNotes = currentNotes.filter((n) => n.id !== seed.id);
+                    existingIds.delete(seed.id);
+                    changed = true;
+                }
+                continue;
+            }
+
             if (!existingIds.has(seed.id)) {
                 currentNotes.push(seed);
                 existingIds.add(seed.id);
@@ -449,13 +336,16 @@ async function getLocalNotes(): Promise<SavedNote[]> {
                 const idx = currentNotes.findIndex((n) => n.id === seed.id);
                 if (idx !== -1) {
                     const existing = currentNotes[idx];
-                    if (
+                    const needsUpdate =
                         !existing.flashcards ||
                         existing.flashcards.length < 10 ||
                         existing.subject !== seed.subject ||
                         !existing.topicVideos ||
-                        existing.topicVideos.length === 0
-                    ) {
+                        existing.topicVideos.length === 0 ||
+                        !existing.imageUris ||
+                        existing.imageUris.length === 0;
+
+                    if (needsUpdate) {
                         currentNotes[idx] = {
                             ...existing,
                             subject: seed.subject,
@@ -463,6 +353,10 @@ async function getLocalNotes(): Promise<SavedNote[]> {
                             title: seed.title,
                             flashcards: seed.flashcards,
                             topicVideos: seed.topicVideos || existing.topicVideos,
+                            imageUris:
+                                existing.imageUris && existing.imageUris.length > 0
+                                    ? existing.imageUris
+                                    : seed.imageUris,
                             extraction: {
                                 ...existing.extraction,
                                 subject: seed.subject,
@@ -571,16 +465,26 @@ async function getLocalFolders(): Promise<SubjectFolder[]> {
             }
         }
 
-        const existingIds = new Set(currentFolders.map((f) => f.id));
-        let changed = false;
+        const deletedFoldersJson = await AsyncStorage.getItem('@cocampus_deleted_folder_ids');
+        const deletedFolderIds: string[] = deletedFoldersJson ? JSON.parse(deletedFoldersJson) : [];
+        const deletedIdsSet = new Set(deletedFolderIds);
 
-        // Guarantee all default folders (Automata, Graph Theory, Biology) exist
+        let changed = false;
+        // Purge deleted sample biology folder and any user-deleted folders
+        if (currentFolders.some((f) => f.id === 'bio-101' || deletedIdsSet.has(f.id))) {
+            currentFolders = currentFolders.filter((f) => f.id !== 'bio-101' && !deletedIdsSet.has(f.id));
+            changed = true;
+        }
+
+        const existingIds = new Set(currentFolders.map((f) => f.id));
+
+        // Guarantee all default folders (Automata, Graph Theory) exist unless deleted by user
         for (const defaultFolder of DEFAULT_FOLDERS) {
-            if (!existingIds.has(defaultFolder.id)) {
+            if (!existingIds.has(defaultFolder.id) && !deletedIdsSet.has(defaultFolder.id)) {
                 currentFolders.push(defaultFolder);
                 existingIds.add(defaultFolder.id);
                 changed = true;
-            } else {
+            } else if (!deletedIdsSet.has(defaultFolder.id)) {
                 const idx = currentFolders.findIndex((f) => f.id === defaultFolder.id);
                 if (idx !== -1) {
                     const cur = currentFolders[idx];
@@ -627,6 +531,23 @@ export async function createSubjectFolder(name: string): Promise<SubjectFolder> 
         updatedAt: now,
     };
 
+    // Unmark from deleted folders list if user deliberately creates/recreates it
+    try {
+        const deletedFoldersJson = await AsyncStorage.getItem('@cocampus_deleted_folder_ids');
+        if (deletedFoldersJson) {
+            const deletedFolderIds: string[] = JSON.parse(deletedFoldersJson);
+            const filtered = deletedFolderIds.filter(
+                (id) =>
+                    id.toLowerCase() !== slug.toLowerCase() &&
+                    id.toLowerCase() !== name.trim().toLowerCase() &&
+                    id.toLowerCase() !== slugify(name).toLowerCase()
+            );
+            await AsyncStorage.setItem('@cocampus_deleted_folder_ids', JSON.stringify(filtered));
+        }
+    } catch (e) {
+        console.warn('Failed to unmark deleted folder on create:', e);
+    }
+
     const folders = await getLocalFolders();
     const existing = folders.find((f) => f.id === slug);
     if (existing) {
@@ -647,6 +568,80 @@ export async function createSubjectFolder(name: string): Promise<SubjectFolder> 
     }
 
     return folder;
+}
+
+export async function deleteSubjectFolder(folderIdOrSlug: string): Promise<boolean> {
+    try {
+        const folders = await getLocalFolders();
+        const target = folders.find(
+            (f) =>
+                f.id.toLowerCase() === folderIdOrSlug.toLowerCase() ||
+                slugify(f.name).toLowerCase() === slugify(folderIdOrSlug).toLowerCase() ||
+                f.name.toLowerCase() === folderIdOrSlug.toLowerCase()
+        );
+        const idToRemove = target ? target.id : folderIdOrSlug;
+        const nameToRemove = target ? target.name : folderIdOrSlug;
+
+        // 1. Mark as deleted so getLocalFolders & getLocalNotes don't resurrect default folders or seed notes
+        const deletedFoldersJson = await AsyncStorage.getItem('@cocampus_deleted_folder_ids');
+        const deletedFolderIds: string[] = deletedFoldersJson ? JSON.parse(deletedFoldersJson) : [];
+        const identifiers = [
+            idToRemove,
+            folderIdOrSlug,
+            slugify(idToRemove),
+            slugify(folderIdOrSlug),
+            nameToRemove,
+            slugify(nameToRemove),
+            nameToRemove.toLowerCase(),
+        ];
+        for (const id of identifiers) {
+            if (id && !deletedFolderIds.includes(id)) {
+                deletedFolderIds.push(id);
+            }
+        }
+        await AsyncStorage.setItem('@cocampus_deleted_folder_ids', JSON.stringify(deletedFolderIds));
+
+        // 2. Remove folder from local storage
+        const updatedFolders = folders.filter(
+            (f) =>
+                f.id.toLowerCase() !== idToRemove.toLowerCase() &&
+                f.id.toLowerCase() !== folderIdOrSlug.toLowerCase() &&
+                slugify(f.name).toLowerCase() !== slugify(nameToRemove).toLowerCase()
+        );
+        await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(updatedFolders));
+
+        // 3. Remove all notes belonging to this folder from local storage
+        const allNotes = await getLocalNotes();
+        const remainingNotes = allNotes.filter(
+            (n) =>
+                n.subjectSlug.toLowerCase() !== idToRemove.toLowerCase() &&
+                n.subjectSlug.toLowerCase() !== folderIdOrSlug.toLowerCase() &&
+                !subjectsMatch(n.subjectSlug, idToRemove) &&
+                !subjectsMatch(n.subjectSlug, folderIdOrSlug) &&
+                !subjectsMatch(n.subject, nameToRemove) &&
+                !subjectsMatch(n.subject, folderIdOrSlug)
+        );
+        await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(remainingNotes));
+
+        // 4. Delete folder from Firebase if available
+        try {
+            const user = await ensureAnonymousAuth();
+            if (user && db) {
+                const userId = user.uid;
+                await deleteDoc(doc(db, `users/${userId}/subjects/${idToRemove}`));
+                if (folderIdOrSlug !== idToRemove) {
+                    await deleteDoc(doc(db, `users/${userId}/subjects/${folderIdOrSlug}`));
+                }
+            }
+        } catch (fbErr) {
+            console.warn('Firebase folder delete skipped:', fbErr);
+        }
+
+        return true;
+    } catch (e) {
+        console.error('Failed to delete subject folder:', e);
+        return false;
+    }
 }
 
 export async function saveNoteToFirestore(
@@ -720,6 +715,10 @@ export async function saveNoteToFirestore(
 export async function fetchSubjectFolders(): Promise<SubjectFolder[]> {
     const localFolders = await getLocalFolders();
     try {
+        const deletedFoldersJson = await AsyncStorage.getItem('@cocampus_deleted_folder_ids');
+        const deletedFolderIds: string[] = deletedFoldersJson ? JSON.parse(deletedFoldersJson) : [];
+        const deletedIdsSet = new Set(deletedFolderIds.map((s) => s.toLowerCase()));
+
         const user = await ensureAnonymousAuth();
         if (user && db) {
             const userId = user.uid;
@@ -728,7 +727,15 @@ export async function fetchSubjectFolders(): Promise<SubjectFolder[]> {
             const snapshot = await getDocs(q);
 
             if (!snapshot.empty) {
-                const remoteFolders = snapshot.docs.map((d) => d.data() as SubjectFolder);
+                const remoteFolders = snapshot.docs
+                    .map((d) => d.data() as SubjectFolder)
+                    .filter(
+                        (f) =>
+                            !deletedIdsSet.has(f.id.toLowerCase()) &&
+                            !deletedIdsSet.has(slugify(f.name).toLowerCase()) &&
+                            !deletedIdsSet.has(f.name.toLowerCase())
+                    );
+
                 const map = new Map<string, SubjectFolder>();
                 for (const f of localFolders) map.set(f.id, f);
                 for (const f of remoteFolders) {
@@ -772,7 +779,17 @@ export async function fetchNotesBySubject(subjectSlug: string): Promise<SavedNot
                 const remoteNotes = snapshot.docs.map((d) => d.data() as SavedNote);
                 const map = new Map<string, SavedNote>();
                 for (const n of localSubjectNotes) map.set(n.id, n);
-                for (const n of remoteNotes) map.set(n.id, { ...map.get(n.id), ...n });
+                for (const n of remoteNotes) {
+                    const local = map.get(n.id);
+                    map.set(n.id, {
+                        ...local,
+                        ...n,
+                        imageUris:
+                            n.imageUris && n.imageUris.length > 0
+                                ? n.imageUris
+                                : local?.imageUris || undefined,
+                    });
+                }
                 return Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
             }
         }
