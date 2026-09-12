@@ -1,4 +1,3 @@
-import React from 'react';
 import { CircleMenu } from "@/components/ui/circle-menu";
 import { Home, Projector, DollarSign, BookOpen, FlaskConical, User, Mail } from 'lucide-react';
 

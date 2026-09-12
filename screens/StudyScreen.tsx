@@ -394,7 +394,6 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
     notes = [],
     folders = [],
     onStartReview,
-    onSelectNote,
     initialSubject,
     onFocusedModeChange,
 }) => {
@@ -409,7 +408,6 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
     // Flashcard State
     const [cardIndex, setCardIndex] = useState<number>(0);
     const [isFlipped, setIsFlipped] = useState<boolean>(false);
-    const [reviewedCount, setReviewedCount] = useState<number>(0);
     const [flashcardLevel, setFlashcardLevel] = useState<FlashcardLevel>('All');
     const [showFcLevelModal, setShowFcLevelModal] = useState<boolean>(false);
     const [activeStudyMode, setActiveStudyMode] = useState<'spaced' | 'reader' | 'cram' | 'audio' | 'practice'>('spaced');
@@ -422,7 +420,6 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
     const [focusedCards, setFocusedCards] = useState<DisplayFlashcard[]>([]);
     const [focusedCardIndex, setFocusedCardIndex] = useState<number>(0);
     const [remainingCount, setRemainingCount] = useState<number>(0);
-    const [completedCount, setCompletedCount] = useState<number>(0);
     const [isFocusedCardFlipped, setIsFocusedCardFlipped] = useState<boolean>(false);
     const [isFocusedSpeaking, setIsFocusedSpeaking] = useState<boolean>(false);
     const [isSessionComplete, setIsSessionComplete] = useState<boolean>(false);
@@ -638,7 +635,6 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
     };
 
     const handleRating = (_rating: string) => {
-        setReviewedCount((c) => c + 1);
         handleNextCard();
     };
 
@@ -719,7 +715,6 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
         const sessionDeck = pool.length > 0 ? pool : CURATED_SUBJECT_FLASHCARDS;
         setFocusedCards(sessionDeck);
         setRemainingCount(sessionDeck.length);
-        setCompletedCount(0);
         setFocusedCardIndex(0);
         setIsFocusedCardFlipped(false);
         setIsSessionComplete(false);
@@ -755,7 +750,6 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
         Speech.stop();
         setIsFocusedSpeaking(false);
         setSessionStats((prev) => ({ ...prev, [rating]: prev[rating] + 1 }));
-        setCompletedCount((c) => c + 1);
 
         setRemainingCount((prevRemaining) => {
             const nextRemaining = Math.max(0, prevRemaining - 1);

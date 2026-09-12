@@ -200,7 +200,7 @@ export async function fetchVideosForTopics(topics: Topic[], subject: string = ''
     }
 
     const results = await Promise.all(
-        topics.map(async (topic, index) => {
+        topics.map(async (topic) => {
             const fallbackForTopic = getCuratedClipsForSubject(subject, topic.heading);
 
             if (!YOUTUBE_API_KEY) {

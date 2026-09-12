@@ -30,7 +30,6 @@ import {
     updateFolderExam,
     forceRefreshStorage,
     AUTOMATA_NOTE,
-    DISCRETE_NOTE,
 } from '../services/storage';
 import { extractExamFromSyllabus, ExtractedExamInfo } from '../services/llm';
 import { VoiceSettingsModal } from '../components/VoiceSettingsModal';
@@ -86,7 +85,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     onSelectNote,
     onQuickReviewPress,
     initialFolder,
-    initialSection,
 }) => {
     const insets = useSafeAreaInsets();
     const topPadding = Platform.OS === 'android' ? Math.max(insets.top, StatusBar.currentHeight || 0, 16) : Math.max(insets.top, 10);
@@ -94,7 +92,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const [selectedFolder, setSelectedFolder] = useState<SubjectFolder | null>(initialFolder || null);
     const [notes, setNotes] = useState<SavedNote[]>([]);
     const [allRecentNotes, setAllRecentNotes] = useState<SavedNote[]>([]);
-    const [loading, setLoading] = useState<boolean>(true);
     const [refreshing, setRefreshing] = useState<boolean>(false);
 
     // Current Term / Year
@@ -168,13 +165,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         } catch (err) {
             console.error('Error fetching data:', err);
         } finally {
-            setLoading(false);
             setRefreshing(false);
         }
     }, [selectedFolder]);
 
     useEffect(() => {
-        setLoading(true);
         loadData();
     }, [loadData]);
 
