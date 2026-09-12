@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
     StyleSheet,
     Text,
@@ -424,6 +424,17 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
     const [showFcLevelModal, setShowFcLevelModal] = useState<boolean>(false);
     const [activeStudyMode, setActiveStudyMode] = useState<'spaced' | 'reader' | 'cram' | 'audio' | 'practice'>('spaced');
     const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+
+    // Scroll References for Smooth Navigation
+    const mainScrollRef = useRef<ScrollView>(null);
+    const studyAreaYRef = useRef<number>(0);
+
+    const scrollToStudyArea = useCallback(() => {
+        mainScrollRef.current?.scrollTo({
+            y: Math.max(0, studyAreaYRef.current - 16),
+            animated: true,
+        });
+    }, []);
 
     // Focused Review Mode State
     const [isFocusedReview, setIsFocusedReview] = useState<boolean>(false);
@@ -1267,6 +1278,7 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
             </View>
 
             <ScrollView
+                ref={mainScrollRef}
                 style={styles.scrollArea}
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
@@ -1407,6 +1419,176 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                 </TouchableOpacity>
                             </View>
 
+                            {/* Top Study Experience Modes Bar: Instant 1-Tap Access to all 5 modes */}
+                            <View
+                                style={styles.topStudyExperienceSection}
+                                onLayout={(e) => {
+                                    studyAreaYRef.current = e.nativeEvent.layout.y;
+                                }}
+                            >
+                                <View style={styles.topStudyExperienceHeader}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        <Ionicons name="compass-outline" size={14} color="#182232" style={{ marginRight: 5 }} />
+                                        <Text style={styles.topStudyExperienceLabel}>STUDY EXPERIENCE</Text>
+                                    </View>
+                                    <Text style={styles.topStudyExperienceSubtitle}>5 Modes Available</Text>
+                                </View>
+
+                                <ScrollView
+                                    horizontal
+                                    showsHorizontalScrollIndicator={false}
+                                    contentContainerStyle={styles.topStudyExperienceScroll}
+                                >
+                                    {/* Spaced Cards (Active Recall) */}
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.topModeChip,
+                                            activeStudyMode === 'spaced' && !isReaderMode && styles.topModeChipActive,
+                                        ]}
+                                        onPress={() => {
+                                            setIsReaderMode(false);
+                                            setActiveStudyMode('spaced');
+                                            scrollToStudyArea();
+                                        }}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons
+                                            name="git-network-outline"
+                                            size={14}
+                                            color={activeStudyMode === 'spaced' && !isReaderMode ? '#ffffff' : '#4b6456'}
+                                            style={{ marginRight: 6 }}
+                                        />
+                                        <Text
+                                            style={[
+                                                styles.topModeChipText,
+                                                activeStudyMode === 'spaced' && !isReaderMode && styles.topModeChipTextActive,
+                                            ]}
+                                        >
+                                            Spaced Repetition
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    {/* Flashcard Reader (Continuous stream) */}
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.topModeChip,
+                                            isReaderMode && styles.topModeChipActive,
+                                        ]}
+                                        onPress={() => {
+                                            setIsReaderMode(true);
+                                            setActiveStudyMode('reader');
+                                            scrollToStudyArea();
+                                        }}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons
+                                            name="book-outline"
+                                            size={14}
+                                            color={isReaderMode ? '#ffffff' : '#1b4d3e'}
+                                            style={{ marginRight: 6 }}
+                                        />
+                                        <Text
+                                            style={[
+                                                styles.topModeChipText,
+                                                isReaderMode && styles.topModeChipTextActive,
+                                            ]}
+                                        >
+                                            Flashcard Reader
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    {/* Cram Mode (Rapid Cycle) */}
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.topModeChip,
+                                            activeStudyMode === 'cram' && styles.topModeChipActive,
+                                        ]}
+                                        onPress={() => {
+                                            setIsReaderMode(false);
+                                            setActiveStudyMode('cram');
+                                            scrollToStudyArea();
+                                        }}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons
+                                            name="flash-outline"
+                                            size={14}
+                                            color={activeStudyMode === 'cram' ? '#ffffff' : '#8a5300'}
+                                            style={{ marginRight: 6 }}
+                                        />
+                                        <Text
+                                            style={[
+                                                styles.topModeChipText,
+                                                activeStudyMode === 'cram' && styles.topModeChipTextActive,
+                                            ]}
+                                        >
+                                            Cram Mode
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    {/* Audio Recall */}
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.topModeChip,
+                                            activeStudyMode === 'audio' && styles.topModeChipActive,
+                                        ]}
+                                        onPress={() => {
+                                            setActiveStudyMode('audio');
+                                            scrollToStudyArea();
+                                            if (isReaderMode) {
+                                                toggleReaderAudioAll();
+                                            } else if (currentCard) {
+                                                handleReadAudio(`Question: ${currentCard.question}. Answer: ${currentCard.answer}`);
+                                            }
+                                        }}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons
+                                            name="headset-outline"
+                                            size={14}
+                                            color={activeStudyMode === 'audio' ? '#ffffff' : '#1b4d3e'}
+                                            style={{ marginRight: 6 }}
+                                        />
+                                        <Text
+                                            style={[
+                                                styles.topModeChipText,
+                                                activeStudyMode === 'audio' && styles.topModeChipTextActive,
+                                            ]}
+                                        >
+                                            Audio Recall
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    {/* Practice Exam */}
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.topModeChip,
+                                            activeStudyMode === 'practice' && styles.topModeChipActive,
+                                        ]}
+                                        onPress={() => {
+                                            setActiveStudyMode('practice');
+                                            setViewMode('quiz');
+                                        }}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons
+                                            name="document-text-outline"
+                                            size={14}
+                                            color={activeStudyMode === 'practice' ? '#ffffff' : '#334155'}
+                                            style={{ marginRight: 6 }}
+                                        />
+                                        <Text
+                                            style={[
+                                                styles.topModeChipText,
+                                                activeStudyMode === 'practice' && styles.topModeChipTextActive,
+                                            ]}
+                                        >
+                                            Practice Exam
+                                        </Text>
+                                    </TouchableOpacity>
+                                </ScrollView>
+                            </View>
+
                             {/* Flashcard Header with Level Setter Dropdown & Reader Mode Toggle */}
                             <View style={styles.sectionHeaderRow}>
                                 <View style={styles.sectionHeaderTitleRow}>
@@ -1457,6 +1639,13 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
 
                             {!isReaderMode ? (
                                 <>
+                                    {activeStudyMode === 'cram' && (
+                                        <View style={styles.cramModeBanner}>
+                                            <Ionicons name="flash" size={13} color="#8a5300" style={{ marginRight: 5 }} />
+                                            <Text style={styles.cramModeBannerText}>Cram Mode Active · Quick rapid cycle with instant answers</Text>
+                                        </View>
+                                    )}
+
                                     {/* Flashcard Hint Banner */}
                                     <View style={styles.tapPromptRow}>
                                         <Ionicons name="finger-print-outline" size={13} color="#75777d" style={{ marginRight: 5 }} />
@@ -1621,6 +1810,7 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                                 onPress={() => {
                                                     setIsReaderMode(false);
                                                     setActiveStudyMode('spaced');
+                                                    scrollToStudyArea();
                                                 }}
                                                 activeOpacity={0.85}
                                             >
@@ -1635,8 +1825,37 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                             >
                                                 <View style={styles.readerActiveModePill}>
                                                     <Ionicons name="book" size={13} color="#182232" style={{ marginRight: 4 }} />
-                                                    <Text style={styles.readerActiveModePillText}>Reader Mode</Text>
+                                                    <Text style={styles.readerActiveModePillText}>Reader Stream</Text>
                                                 </View>
+
+                                                <TouchableOpacity
+                                                    style={styles.readerModeChip}
+                                                    onPress={() => {
+                                                        setIsReaderMode(false);
+                                                        setActiveStudyMode('cram');
+                                                        scrollToStudyArea();
+                                                    }}
+                                                    activeOpacity={0.85}
+                                                >
+                                                    <Ionicons name="flash-outline" size={14} color="#8a5300" style={{ marginRight: 4 }} />
+                                                    <Text style={styles.readerModeChipText}>Cram</Text>
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity
+                                                    style={styles.readerModeChip}
+                                                    onPress={toggleReaderAudioAll}
+                                                    activeOpacity={0.85}
+                                                >
+                                                    <Ionicons
+                                                        name={isReaderPlayingAll ? 'stop-circle' : 'volume-high'}
+                                                        size={14}
+                                                        color={isReaderPlayingAll ? '#dc2626' : '#1b4d3e'}
+                                                        style={{ marginRight: 4 }}
+                                                    />
+                                                    <Text style={[styles.readerModeChipText, isReaderPlayingAll && { color: '#dc2626' }]}>
+                                                        {isReaderPlayingAll ? 'Stop Audio' : 'Audio All'}
+                                                    </Text>
+                                                </TouchableOpacity>
 
                                                 <TouchableOpacity
                                                     style={styles.readerModeChip}
@@ -1647,7 +1866,7 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                                     activeOpacity={0.85}
                                                 >
                                                     <Ionicons name="help-circle-outline" size={14} color="#182232" style={{ marginRight: 4 }} />
-                                                    <Text style={styles.readerModeChipText}>Quiz</Text>
+                                                    <Text style={styles.readerModeChipText}>Quiz & Exam</Text>
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity
@@ -1655,7 +1874,7 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                                     onPress={startDailyFocusedReview}
                                                     activeOpacity={0.85}
                                                 >
-                                                    <Ionicons name="flash-outline" size={14} color="#8a5300" style={{ marginRight: 4 }} />
+                                                    <Ionicons name="speedometer-outline" size={14} color="#8a5300" style={{ marginRight: 4 }} />
                                                     <Text style={styles.readerModeChipText}>Drill</Text>
                                                 </TouchableOpacity>
                                             </ScrollView>
@@ -1791,7 +2010,11 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
 
                                     <TouchableOpacity
                                         style={styles.readerSwitchToCardBtn}
-                                        onPress={() => setIsReaderMode(false)}
+                                        onPress={() => {
+                                            setIsReaderMode(false);
+                                            setActiveStudyMode('spaced');
+                                            scrollToStudyArea();
+                                        }}
                                         activeOpacity={0.85}
                                     >
                                         <Ionicons name="layers-outline" size={15} color="#182232" style={{ marginRight: 6 }} />
@@ -1810,6 +2033,7 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                     onPress={() => {
                                         setIsReaderMode(false);
                                         setActiveStudyMode('spaced');
+                                        scrollToStudyArea();
                                     }}
                                     activeOpacity={0.8}
                                 >
@@ -1831,6 +2055,7 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                     onPress={() => {
                                         setIsReaderMode(true);
                                         setActiveStudyMode('reader');
+                                        scrollToStudyArea();
                                     }}
                                     activeOpacity={0.8}
                                 >
@@ -1849,7 +2074,11 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
 
                                 <TouchableOpacity
                                     style={[styles.modeCard, activeStudyMode === 'cram' && styles.modeCardActive]}
-                                    onPress={() => setActiveStudyMode('cram')}
+                                    onPress={() => {
+                                        setIsReaderMode(false);
+                                        setActiveStudyMode('cram');
+                                        scrollToStudyArea();
+                                    }}
                                     activeOpacity={0.8}
                                 >
                                     <View style={[styles.modeIconBox, activeStudyMode === 'cram' && styles.modeIconBoxActive]}>
@@ -1869,7 +2098,10 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                     style={[styles.modeCard, activeStudyMode === 'audio' && styles.modeCardActive]}
                                     onPress={() => {
                                         setActiveStudyMode('audio');
-                                        if (currentCard) {
+                                        scrollToStudyArea();
+                                        if (isReaderMode) {
+                                            toggleReaderAudioAll();
+                                        } else if (currentCard) {
                                             handleReadAudio(`Question: ${currentCard.question}. Answer: ${currentCard.answer}`);
                                         }
                                     }}
@@ -1890,7 +2122,10 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
 
                                 <TouchableOpacity
                                     style={[styles.modeCard, activeStudyMode === 'practice' && styles.modeCardActive]}
-                                    onPress={() => setViewMode('quiz')}
+                                    onPress={() => {
+                                        setActiveStudyMode('practice');
+                                        setViewMode('quiz');
+                                    }}
                                     activeOpacity={0.8}
                                 >
                                     <View style={[styles.modeIconBox, activeStudyMode === 'practice' && styles.modeIconBoxActive]}>
@@ -4353,5 +4588,81 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: '700',
         color: '#182232',
+    },
+    topStudyExperienceSection: {
+        marginTop: 4,
+        marginBottom: 16,
+    },
+    topStudyExperienceHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+        paddingHorizontal: 2,
+    },
+    topStudyExperienceLabel: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#182232',
+        letterSpacing: 0.6,
+    },
+    topStudyExperienceSubtitle: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#75777d',
+    },
+    topStudyExperienceScroll: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingVertical: 2,
+    },
+    topModeChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+        elevation: 1,
+    },
+    topModeChipActive: {
+        backgroundColor: '#182232',
+        borderColor: '#182232',
+        shadowColor: '#182232',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    topModeChipText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#334155',
+    },
+    topModeChipTextActive: {
+        color: '#ffffff',
+    },
+    cramModeBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fffbeb',
+        borderWidth: 1,
+        borderColor: '#fde68a',
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        borderRadius: 12,
+        marginBottom: 8,
+    },
+    cramModeBannerText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#8a5300',
     },
 });
