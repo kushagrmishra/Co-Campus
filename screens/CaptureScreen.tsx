@@ -89,7 +89,7 @@ export const CaptureScreen: React.FC<CaptureScreenProps> = ({
 
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                quality: 0.8,
+                quality: 0.55,
                 base64: true,
             });
 
@@ -122,7 +122,7 @@ export const CaptureScreen: React.FC<CaptureScreenProps> = ({
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ImagePicker.MediaTypeOptions.Images,
                 allowsMultipleSelection: true,
-                quality: 0.8,
+                quality: 0.55,
                 base64: true,
             });
 

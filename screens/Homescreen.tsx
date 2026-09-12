@@ -282,7 +282,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: ImagePicker.MediaTypeOptions.Images,
                 base64: true,
-                quality: 0.8,
+                quality: 0.55,
             });
             if (!result.canceled && result.assets[0]?.base64) {
                 await processExamImage(result.assets[0].base64);
@@ -297,7 +297,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ImagePicker.MediaTypeOptions.Images,
                 base64: true,
-                quality: 0.8,
+                quality: 0.55,
             });
             if (!result.canceled && result.assets[0]?.base64) {
                 await processExamImage(result.assets[0].base64);

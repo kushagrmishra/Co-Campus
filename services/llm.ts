@@ -25,8 +25,13 @@ function safeParse<T>(raw: string, fallback: T): T {
     }
 }
 
-// ── Core LLM Callers ─────────────────────────────────────────────────────────
-async function callOpenRouter(prompt: string, images: string[] = [], temperature = 0.2): Promise<string> {
+// ── In-Memory Token-Saving Response Caches ────────────────────────────────────
+const mcqCache = new Map<string, MCQQuestion[]>();
+const qaCache = new Map<string, string>();
+const flashcardCache = new Map<string, Flashcard[]>();
+
+// ── Core LLM Callers with Token-Bounded Completions ──────────────────────────
+async function callOpenRouter(prompt: string, images: string[] = [], temperature = 0.2, maxTokens = 1000): Promise<string> {
     if (!OPENROUTER_KEY) throw new Error('OpenRouter API key missing');
     const content: any[] = [{ type: 'text', text: prompt }];
     for (const img of images) {
@@ -43,7 +48,7 @@ async function callOpenRouter(prompt: string, images: string[] = [], temperature
         body: JSON.stringify({
             model: OPENROUTER_MODEL,
             temperature,
-            max_tokens: 2048,
+            max_tokens: maxTokens,
             messages: [{ role: 'user', content: images.length ? content : prompt }],
         }),
     });
@@ -52,7 +57,7 @@ async function callOpenRouter(prompt: string, images: string[] = [], temperature
     return data.choices?.[0]?.message?.content || '';
 }
 
-async function callGemini(prompt: string, images: string[] = [], json = false): Promise<string> {
+async function callGemini(prompt: string, images: string[] = [], json = false, maxTokens = 1000): Promise<string> {
     if (!GEMINI_KEY) throw new Error('Gemini API key missing');
     const parts: any[] = [{ text: prompt }];
     for (const img of images) {
@@ -65,7 +70,7 @@ async function callGemini(prompt: string, images: string[] = [], json = false): 
             contents: [{ parts }],
             generationConfig: {
                 temperature: 0.2,
-                maxOutputTokens: 2048,
+                maxOutputTokens: maxTokens,
                 ...(json ? { responseMimeType: 'application/json' } : {}),
             },
         }),
@@ -75,7 +80,7 @@ async function callGemini(prompt: string, images: string[] = [], json = false): 
     return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
-async function callGroq(prompt: string, json = false): Promise<string> {
+async function callGroq(prompt: string, json = false, maxTokens = 1000): Promise<string> {
     if (!GROQ_KEY) throw new Error('Groq API key missing');
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -83,7 +88,7 @@ async function callGroq(prompt: string, json = false): Promise<string> {
         body: JSON.stringify({
             model: GROQ_MODEL,
             temperature: 0.3,
-            max_tokens: 2048,
+            max_tokens: maxTokens,
             ...(json ? { response_format: { type: 'json_object' } } : {}),
             messages: [{ role: 'user', content: prompt }],
         }),
@@ -93,27 +98,27 @@ async function callGroq(prompt: string, json = false): Promise<string> {
     return data.choices?.[0]?.message?.content || '';
 }
 
-/** Unified vision caller: tries OpenRouter, then Gemini fallback */
-async function callVision(prompt: string, images: string[]): Promise<string> {
+/** Unified vision caller: cascades OpenRouter -> Gemini */
+async function callVision(prompt: string, images: string[], maxTokens = 1200): Promise<string> {
     if (OPENROUTER_KEY) {
-        try { return await callOpenRouter(prompt, images); } catch (e) { console.warn('OpenRouter vision failed:', e); }
+        try { return await callOpenRouter(prompt, images, 0.2, maxTokens); } catch (e) { console.warn('OpenRouter vision failed:', e); }
     }
     if (GEMINI_KEY) {
-        try { return await callGemini(prompt, images, true); } catch (e) { console.warn('Gemini vision failed:', e); }
+        try { return await callGemini(prompt, images, true, maxTokens); } catch (e) { console.warn('Gemini vision failed:', e); }
     }
     throw new Error('All vision LLM providers failed. Check your API keys.');
 }
 
-/** Unified text caller: cascades OpenRouter -> Gemini -> Groq */
-async function callText(prompt: string, json = false): Promise<string> {
+/** Unified text caller: cascades OpenRouter -> Gemini -> Groq with token limits */
+async function callText(prompt: string, json = false, maxTokens = 800): Promise<string> {
     if (OPENROUTER_KEY) {
-        try { const r = await callOpenRouter(prompt, [], 0.3); if (r) return r; } catch (e) { console.warn('OpenRouter text failed:', e); }
+        try { const r = await callOpenRouter(prompt, [], 0.3, maxTokens); if (r) return r; } catch (e) { console.warn('OpenRouter text failed:', e); }
     }
     if (GEMINI_KEY) {
-        try { const r = await callGemini(prompt, [], json); if (r) return r; } catch (e) { console.warn('Gemini text failed:', e); }
+        try { const r = await callGemini(prompt, [], json, maxTokens); if (r) return r; } catch (e) { console.warn('Gemini text failed:', e); }
     }
     if (GROQ_KEY) {
-        try { const r = await callGroq(prompt, json); if (r) return r; } catch (e) { console.warn('Groq text failed:', e); }
+        try { const r = await callGroq(prompt, json, maxTokens); if (r) return r; } catch (e) { console.warn('Groq text failed:', e); }
     }
     return '';
 }
@@ -236,16 +241,15 @@ export async function extractStudyMaterial(
     if (images.length === 0) throw new Error('At least one image is required for analysis.');
 
     const subjectInst = targetSubject
-        ? `Designated subject: "${targetSubject}". Set "subject" strictly to "${targetSubject}".`
-        : 'Deduce a clear, concise subject (2-4 words, e.g. "Calculus II", "Data Structures").';
+        ? `Subject: "${targetSubject}".`
+        : 'Identify course subject (2-4 words).';
 
     const existingInst = existingExtraction
-        ? `\nAppending to "${existingExtraction.title}" (${existingExtraction.subject}). Merge previous notes: "${existingExtraction.generatedNotes}" with new content.`
+        ? ` Merge with previous summary: "${(existingExtraction.generatedNotes || '').slice(0, 350)}".`
         : '';
 
-    const prompt = `Analyze ${images.length} whiteboard/lecture/notebook image(s).
-${subjectInst}${existingInst}
-Return ONLY a valid JSON object strictly matching this schema:
+    const prompt = `Analyze ${images.length} academic note image(s). ${subjectInst}${existingInst}
+Return ONLY valid JSON:
 {
   "subject": string,
   "title": string,
@@ -254,33 +258,46 @@ Return ONLY a valid JSON object strictly matching this schema:
   "rawText": string,
   "generatedNotes": string
 }
-No markdown blocks or preambles. "dueDate" must be null if not visible. "generatedNotes" should be a 150-400 word cohesive summary.`;
+"dueDate" must be null if not visible. "generatedNotes": 150-350 word cohesive summary.`;
 
-    const raw = await callVision(prompt, images);
+    const raw = await callVision(prompt, images, 1200);
     const parsed = safeParse<ExtractionData>(raw, null as any);
     if (!parsed) throw new Error('Failed to parse study material extraction response.');
     if (targetSubject) parsed.subject = targetSubject;
     return parsed;
 }
 
-// ── Flashcard Generation ─────────────────────────────────────────────────────
+// ── Flashcard Generation (Token-Optimized) ───────────────────────────────────
 export async function generateFlashcards(extraction: ExtractionData): Promise<Flashcard[]> {
-    const prompt = `Generate at least 10 high-quality flashcards based on this study material:
-${JSON.stringify(extraction)}
-Return ONLY a JSON object: { "flashcards": [{ "question": string, "answer": string }] }
-No preambles, no markdown.`;
+    const noteKey = `${extraction.subject}_${extraction.title}_${(extraction.generatedNotes || '').slice(0, 40)}`;
+    if (flashcardCache.has(noteKey)) {
+        return flashcardCache.get(noteKey)!;
+    }
+
+    // High-yield compact context instead of sending full rawText
+    const compactTopics = (extraction.topics || []).map(t => t.heading).slice(0, 6).join(', ');
+    const compactNotes = (extraction.generatedNotes || '').slice(0, 450);
+
+    const prompt = `Generate 10 collegiate study flashcards for ${extraction.subject} ("${extraction.title}").
+Topics: ${compactTopics}
+Summary: ${compactNotes}
+Return ONLY JSON: { "flashcards": [{ "question": string, "answer": string }] }`;
 
     try {
-        const raw = await callText(prompt, true);
+        const raw = await callText(prompt, true, 750);
         const parsed = safeParse<{ flashcards: Flashcard[] }>(raw, { flashcards: [] });
-        return parsed.flashcards || [];
+        const cards = parsed.flashcards || [];
+        if (cards.length > 0) {
+            flashcardCache.set(noteKey, cards);
+        }
+        return cards;
     } catch (err) {
         console.warn('Flashcard generation failed, returning empty list:', err);
         return [];
     }
 }
 
-// ── Exam Extraction from Syllabus ────────────────────────────────────────────
+// ── Exam Extraction from Syllabus (Token-Optimized) ───────────────────────────
 export interface ExtractedExamInfo {
     subject: string;
     examTitle: string;
@@ -289,12 +306,10 @@ export interface ExtractedExamInfo {
 }
 
 export async function extractExamFromSyllabus(base64Image: string): Promise<ExtractedExamInfo> {
-    const prompt = `Analyze this syllabus or schedule image for upcoming exams/midterms/finals.
-Return ONLY a JSON object:
-{ "subject": string, "examTitle": string, "examDate": string, "examTag": string }
-No preambles or markdown.`;
+    const prompt = `Extract upcoming exam schedule from syllabus image.
+Return ONLY JSON: { "subject": string, "examTitle": string, "examDate": string, "examTag": string }`;
 
-    const raw = await callVision(prompt, [base64Image]);
+    const raw = await callVision(prompt, [base64Image], 250);
     const parsed = safeParse<Partial<ExtractedExamInfo>>(raw, {});
     return {
         subject: parsed.subject || 'Course Exam',
@@ -341,17 +356,22 @@ export async function generateMCQs(
     level: 'Foundations' | 'Standard' | 'Hard',
     noteText?: string
 ): Promise<MCQQuestion[]> {
-    if (noteText && noteText.trim().length > 30) {
-        const prompt = `Generate 4 multiple-choice exam practice questions for "${subject}" at level "${level}".
-Context Notes: "${noteText.slice(0, 1200)}"
-Return ONLY a JSON array: [{ "question": string, "options": [string, string, string, string], "correctIndex": number, "explanation": string }]
-No markdown or preamble.`;
+    const contextSnippet = (noteText || '').trim().slice(0, 400);
+    const cacheKey = `${subject.toLowerCase()}_${level}_${contextSnippet.length > 0 ? contextSnippet.slice(0, 30) : 'none'}`;
+    if (mcqCache.has(cacheKey)) {
+        return mcqCache.get(cacheKey)!;
+    }
+
+    if (contextSnippet.length > 30) {
+        const prompt = `Generate 4 MCQs for "${subject}" (${level}).
+Context: "${contextSnippet}"
+Return ONLY JSON array: [{ "question": string, "options": [string, string, string, string], "correctIndex": number, "explanation": string }]`;
 
         try {
-            const raw = await callText(prompt, true);
+            const raw = await callText(prompt, true, 600);
             const parsed = safeParse<any[]>(raw, []);
             if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed.map((item, idx) => ({
+                const results: MCQQuestion[] = parsed.map((item, idx) => ({
                     id: `ai_mcq_${Date.now()}_${idx}`,
                     subject,
                     level,
@@ -360,6 +380,8 @@ No markdown or preamble.`;
                     correctIndex: typeof item.correctIndex === 'number' ? item.correctIndex : 0,
                     explanation: item.explanation || 'Verified correct choice based on course principles.',
                 }));
+                mcqCache.set(cacheKey, results);
+                return results;
             }
         } catch (e) {
             console.warn('MCQ generation fallback to curated bank:', e);
@@ -367,34 +389,77 @@ No markdown or preamble.`;
     }
 
     const matching = CURATED_MCQS.filter(q => subjectsMatch(q.subject, subject) && q.level === level);
-    if (matching.length) return matching;
-
-    const bySubject = CURATED_MCQS.filter(q => subjectsMatch(q.subject, subject));
-    return bySubject.length ? bySubject : CURATED_MCQS;
+    const fallbackList = matching.length ? matching : (CURATED_MCQS.filter(q => subjectsMatch(q.subject, subject)).length ? CURATED_MCQS.filter(q => subjectsMatch(q.subject, subject)) : CURATED_MCQS);
+    mcqCache.set(cacheKey, fallbackList);
+    return fallbackList;
 }
 
-// ── Collegiate AI Note Copilot ───────────────────────────────────────────────
+// ── Collegiate AI Note Copilot (Token-Optimized) ─────────────────────────────
 export async function askNoteAiDirectly(note: SavedNote, question: string): Promise<string> {
     const trimmed = question.trim();
     if (!trimmed) return 'Please ask a question about your lecture notes.';
 
-    const qaPrompt = `You are the CoCampus Collegiate AI Study Copilot. Answer directly, accurately, and concisely based strictly on these notes:
-Course Subject: ${note.subject}
-Note Title: ${note.title}
-Summary: ${note.extraction.generatedNotes}
-Topics: ${JSON.stringify(note.extraction.topics)}
-Tasks: ${JSON.stringify(note.extraction.tasks)}
-Question: "${trimmed}"
-Instructions:
-- Direct, collegiate-level answer immediately in the first sentence.
-- If asking for a formula/definition, state its components.
-- Keep response between 2 to 4 concise paragraphs or bullet points. No raw emojis.`;
+    const cacheKey = `${note.id || note.title}_${trimmed.toLowerCase()}`;
+    if (qaCache.has(cacheKey)) {
+        return qaCache.get(cacheKey)!;
+    }
 
-    const answer = await callText(qaPrompt);
-    if (answer && answer.trim().length > 0) return answer.trim();
+    const q = trimmed.toLowerCase();
+
+    // 0-Token Smart Offline Intent Resolver
+    if (q.includes('task') || q.includes('todo') || q.includes('homework') || q.includes('due date') || q.includes('assignment')) {
+        if (note.extraction.tasks && note.extraction.tasks.length > 0) {
+            const taskList = note.extraction.tasks
+                .map(t => `• ${t.title}${t.dueDate ? ` (Due: ${t.dueDate})` : ''}${t.notes ? ` - ${t.notes}` : ''}`)
+                .join('\n');
+            const res = `Here are the identified action items and assignments from your notes:\n\n${taskList}`;
+            qaCache.set(cacheKey, res);
+            return res;
+        }
+    }
+
+    if (q.includes('summary') || q.includes('overview') || q.includes('what is this note') || q.includes('summarize')) {
+        const topConcepts = note.extraction.topics.map(t => `• ${t.heading}: ${t.bullets.slice(0, 2).join('; ')}`).join('\n');
+        const res = `Executive Summary for "${note.title}":\n\n${note.extraction.generatedNotes}\n\nKey Concepts:\n${topConcepts}`;
+        qaCache.set(cacheKey, res);
+        return res;
+    }
+
+    if (q.includes('topic') || q.includes('outline') || q.includes('what are the topics') || q.includes('headings')) {
+        const topicsList = note.extraction.topics.map((t, idx) => `${idx + 1}. ${t.heading}\n   - ${t.bullets.slice(0, 2).join('\n   - ')}`).join('\n\n');
+        const res = `Here are the topics covered in "${note.title}":\n\n${topicsList}`;
+        qaCache.set(cacheKey, res);
+        return res;
+    }
+
+    if ((q.includes('quiz') || q.includes('practice') || q.includes('test me') || q.includes('flashcard')) && note.flashcards?.length) {
+        const card = note.flashcards[Math.floor(Math.random() * note.flashcards.length)];
+        const res = `Practice Flashcard for ${note.subject}:\n\nQuestion: "${card.question}"\n\nAnswer: ${card.answer}`;
+        qaCache.set(cacheKey, res);
+        return res;
+    }
+
+    // High-yield compact topics representation (saves ~400 JSON tokens)
+    const compactTopics = note.extraction.topics
+        .map(t => `${t.heading}: ${t.bullets.slice(0, 2).join('; ')}`)
+        .slice(0, 4)
+        .join(' | ');
+
+    const qaPrompt = `You are CoCampus Collegiate Copilot. Answer concisely based strictly on these notes:
+Subject: ${note.subject} | Title: ${note.title}
+Notes: ${note.extraction.generatedNotes.slice(0, 500)}
+Key Topics: ${compactTopics}
+Question: "${trimmed}"
+Answer collegiate and direct in 1-3 short paragraphs or bullets.`;
+
+    const answer = await callText(qaPrompt, false, 450);
+    if (answer && answer.trim().length > 0) {
+        const cleanAnswer = answer.trim();
+        qaCache.set(cacheKey, cleanAnswer);
+        return cleanAnswer;
+    }
 
     // Intelligent Local Note Grounding Engine (100% offline fallback)
-    const q = trimmed.toLowerCase();
     if (q.includes('dfa') || q.includes('deterministic') || q.includes('finite automata')) {
         return 'Deterministic Finite Automata (DFA) are models that recognize regular languages. Defined by 5-tuple (Q, Σ, δ, q0, F):\n\n• Q: Finite set of states.\n• Σ: Input alphabet.\n• δ: Transition function (Q × Σ → Q).\n• q0: Initial state.\n• F: Accepting states.\n\nStrictly one deterministic transition per state and symbol.';
     }
@@ -407,13 +472,6 @@ Instructions:
     if (q.includes('exam') || q.includes('test') || q.includes('midterm')) {
         return 'Key Exam Focus Points:\n\n1. State-transition completeness: Ensure no input symbol is unhandled.\n2. String tracing: Practice tracing binary strings step-by-step.\n3. Formal proofs: Be ready to write the formal 5-tuple and prove language closure.';
     }
-    if (q.includes('summary') || q.includes('overview')) {
-        return `Executive Summary for "${note.title}":\n\n${note.extraction.generatedNotes}\n\nKey Concepts:\n${note.extraction.topics.map(t => `• ${t.heading}: ${t.bullets.slice(0, 2).join('; ')}`).join('\n')}`;
-    }
-    if ((q.includes('quiz') || q.includes('practice')) && note.flashcards?.length) {
-        const card = note.flashcards[Math.floor(Math.random() * note.flashcards.length)];
-        return `Practice Question for ${note.subject}:\n\n"${card.question}"\n\nCorrect Answer: ${card.answer}`;
-    }
 
     const matchingTopic = note.extraction.topics.find(t =>
         t.heading.toLowerCase().split(' ').some(w => w.length > 3 && q.includes(w))
@@ -422,5 +480,5 @@ Instructions:
         return `Regarding ${matchingTopic.heading}:\n\n${matchingTopic.bullets.map(b => `• ${b}`).join('\n')}\n\nThis is a core milestone in ${note.subject}.`;
     }
 
-    return `Based on your notes for "${note.title}":\n\n${note.extraction.generatedNotes.slice(0, 360)}...\n\nKey takeaways:\n${note.extraction.topics.slice(0, 2).map(t => `• ${t.heading}: ${t.bullets[0] || 'Core concept'}`).join('\n')}`;
+    return `Based on your notes for "${note.title}":\n\n${note.extraction.generatedNotes.slice(0, 320)}...\n\nKey takeaways:\n${note.extraction.topics.slice(0, 2).map(t => `• ${t.heading}: ${t.bullets[0] || 'Core concept'}`).join('\n')}`;
 }

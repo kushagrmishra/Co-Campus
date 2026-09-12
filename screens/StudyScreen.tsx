@@ -587,8 +587,10 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                         subjectsMatch(n.subject, selectedSubject) ||
                         subjectsMatch(n.subjectSlug, selectedSubject)
                 )
-                .map((n) => `${n.title}\n${n.extraction.generatedNotes}`)
-                .join('\n\n');
+                .slice(0, 3)
+                .map((n) => `${n.title}: ${(n.extraction?.generatedNotes || '').slice(0, 200)}`)
+                .join('\n')
+                .slice(0, 500);
 
             const qs = await generateMCQs(
                 selectedSubject === 'All' ? 'Automata Theory' : selectedSubject,
