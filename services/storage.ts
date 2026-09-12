@@ -11,19 +11,52 @@ import {
     orderBy,
 } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 import { db, ensureAnonymousAuth } from './firebase';
 import { SavedNote, SubjectFolder, ExtractionData, Flashcard, TopicVideoGroup } from '../types';
 
 const STORAGE_KEY_NOTES = '@cocampus_saved_notes';
 const STORAGE_KEY_FOLDERS = '@cocampus_subject_folders';
+const FOLDER_NOTES_PREFIX = '@cocampus_folder_notes_';
+
+// Filesystem directories for high-capacity unlimited storage on native devices
+const FS_BASE_DIR = FileSystem.documentDirectory ? `${FileSystem.documentDirectory}cocampus_storage/` : null;
+const FS_NOTES_DIR = FS_BASE_DIR ? `${FS_BASE_DIR}notes/` : null;
+const FS_FOLDERS_DIR = FS_BASE_DIR ? `${FS_BASE_DIR}folders/` : null;
+
+async function ensureFsDirectories(): Promise<boolean> {
+    if (!FS_NOTES_DIR || !FS_FOLDERS_DIR) return false;
+    try {
+        const nInfo = await FileSystem.getInfoAsync(FS_NOTES_DIR);
+        if (!nInfo.exists) {
+            await FileSystem.makeDirectoryAsync(FS_NOTES_DIR, { intermediates: true });
+        }
+        const fInfo = await FileSystem.getInfoAsync(FS_FOLDERS_DIR);
+        if (!fInfo.exists) {
+            await FileSystem.makeDirectoryAsync(FS_FOLDERS_DIR, { intermediates: true });
+        }
+        return true;
+    } catch {
+        return false;
+    }
+}
 
 export function slugify(text: string): string {
-    return text
+    const cleaned = text
         .toLowerCase()
         .trim()
         .replace(/[^\w\s-]/g, '')
         .replace(/[\s_-]+/g, '-')
         .replace(/^-+|-+$/g, '');
+    if (cleaned) return cleaned;
+
+    // Unicode / International name / Emoji hash fallback
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+        hash = (hash << 5) - hash + text.charCodeAt(i);
+        hash |= 0;
+    }
+    return `folder_${Math.abs(hash).toString(36)}`;
 }
 
 export const AUTOMATA_NOTE: SavedNote = {
@@ -423,28 +456,81 @@ export async function updateFolderExam(
 
 async function saveNoteLocally(noteData: SavedNote): Promise<void> {
     try {
+        // 1. Filesystem persistent write (unlimited capacity)
+        if (FS_NOTES_DIR) {
+            try {
+                await ensureFsDirectories();
+                await FileSystem.writeAsStringAsync(
+                    `${FS_NOTES_DIR}${noteData.id}.json`,
+                    JSON.stringify(noteData),
+                    { encoding: FileSystem.EncodingType.UTF8 }
+                );
+            } catch (fsErr) {
+                console.warn('Filesystem note save fallback:', fsErr);
+            }
+        }
+
+        // 2. Folder-partitioned storage key (scalable to unlimited folders)
+        const partitionKey = `${FOLDER_NOTES_PREFIX}${noteData.subjectSlug}`;
+        try {
+            const partJson = await AsyncStorage.getItem(partitionKey);
+            let partNotes: SavedNote[] = partJson ? JSON.parse(partJson) : [];
+            partNotes = partNotes.filter((n) => n.id !== noteData.id);
+            partNotes.unshift(noteData);
+            await AsyncStorage.setItem(partitionKey, JSON.stringify(partNotes));
+        } catch (partErr) {
+            console.warn('Partitioned note save error:', partErr);
+        }
+
+        // 3. Keep master cache in sync
         const notes = await getLocalNotes();
         const filtered = notes.filter((n) => n.id !== noteData.id);
         filtered.unshift(noteData);
         await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(filtered));
 
-        // Update local folder index
+        // 4. Update local folder index & count
         const folders = await getLocalFolders();
-        const existingFolder = folders.find((f) => f.id === noteData.subjectSlug);
-        const folderNotes = filtered.filter((n) => n.subjectSlug === noteData.subjectSlug);
+        let targetFolder = folders.find(
+            (f) =>
+                f.id === noteData.subjectSlug ||
+                subjectsMatch(f.id, noteData.subjectSlug) ||
+                subjectsMatch(f.name, noteData.subject)
+        );
 
-        if (existingFolder) {
-            existingFolder.noteCount = folderNotes.length;
-            existingFolder.updatedAt = noteData.createdAt;
+        // Count notes for this folder
+        const folderNotesCount = filtered.filter(
+            (n) =>
+                n.subjectSlug === noteData.subjectSlug ||
+                subjectsMatch(n.subjectSlug, noteData.subjectSlug) ||
+                subjectsMatch(n.subject, noteData.subject)
+        ).length;
+
+        if (targetFolder) {
+            targetFolder.noteCount = folderNotesCount;
+            targetFolder.updatedAt = noteData.createdAt;
         } else {
-            folders.unshift({
+            targetFolder = {
                 id: noteData.subjectSlug,
                 name: noteData.subject,
-                noteCount: folderNotes.length,
+                noteCount: folderNotesCount,
                 updatedAt: noteData.createdAt,
-            });
+            };
+            folders.unshift(targetFolder);
         }
         await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(folders));
+
+        if (FS_FOLDERS_DIR) {
+            try {
+                await ensureFsDirectories();
+                await FileSystem.writeAsStringAsync(
+                    `${FS_FOLDERS_DIR}${targetFolder.id}.json`,
+                    JSON.stringify(targetFolder),
+                    { encoding: FileSystem.EncodingType.UTF8 }
+                );
+            } catch {
+                // ignore
+            }
+        }
     } catch (e) {
         console.error('Failed to save note locally:', e);
     }
@@ -470,6 +556,29 @@ async function getLocalFolders(): Promise<SubjectFolder[]> {
         const deletedIdsSet = new Set(deletedFolderIds);
 
         let changed = false;
+
+        // If AsyncStorage had no folders, restore from filesystem if available
+        if (currentFolders.length === 0 && FS_FOLDERS_DIR) {
+            try {
+                await ensureFsDirectories();
+                const files = await FileSystem.readDirectoryAsync(FS_FOLDERS_DIR);
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        const content = await FileSystem.readAsStringAsync(`${FS_FOLDERS_DIR}${file}`, {
+                            encoding: FileSystem.EncodingType.UTF8,
+                        });
+                        const parsedFolder = JSON.parse(content) as SubjectFolder;
+                        if (parsedFolder && parsedFolder.id && !deletedIdsSet.has(parsedFolder.id)) {
+                            currentFolders.push(parsedFolder);
+                            changed = true;
+                        }
+                    }
+                }
+            } catch {
+                // continue
+            }
+        }
+
         // Purge deleted sample biology folder and any user-deleted folders
         if (currentFolders.some((f) => f.id === 'bio-101' || deletedIdsSet.has(f.id))) {
             currentFolders = currentFolders.filter((f) => f.id !== 'bio-101' && !deletedIdsSet.has(f.id));
@@ -522,11 +631,34 @@ async function getLocalFolders(): Promise<SubjectFolder[]> {
 }
 
 export async function createSubjectFolder(name: string): Promise<SubjectFolder> {
-    const slug = slugify(name);
+    const trimmed = name.trim();
+    if (!trimmed) {
+        throw new Error('Folder name cannot be empty');
+    }
+
+    const baseSlug = slugify(trimmed);
     const now = Date.now();
+
+    const folders = await getLocalFolders();
+
+    // Check if folder with exact name already exists
+    const existing = folders.find(
+        (f) => f.name.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existing) {
+        return existing;
+    }
+
+    // Determine unique collision-free slug
+    let uniqueSlug = baseSlug;
+    let counter = 2;
+    while (folders.some((f) => f.id.toLowerCase() === uniqueSlug.toLowerCase())) {
+        uniqueSlug = `${baseSlug}-${counter++}`;
+    }
+
     const folder: SubjectFolder = {
-        id: slug,
-        name: name.trim(),
+        id: uniqueSlug,
+        name: trimmed,
         noteCount: 0,
         updatedAt: now,
     };
@@ -538,9 +670,9 @@ export async function createSubjectFolder(name: string): Promise<SubjectFolder> 
             const deletedFolderIds: string[] = JSON.parse(deletedFoldersJson);
             const filtered = deletedFolderIds.filter(
                 (id) =>
-                    id.toLowerCase() !== slug.toLowerCase() &&
-                    id.toLowerCase() !== name.trim().toLowerCase() &&
-                    id.toLowerCase() !== slugify(name).toLowerCase()
+                    id.toLowerCase() !== uniqueSlug.toLowerCase() &&
+                    id.toLowerCase() !== trimmed.toLowerCase() &&
+                    id.toLowerCase() !== baseSlug.toLowerCase()
             );
             await AsyncStorage.setItem('@cocampus_deleted_folder_ids', JSON.stringify(filtered));
         }
@@ -548,19 +680,27 @@ export async function createSubjectFolder(name: string): Promise<SubjectFolder> 
         console.warn('Failed to unmark deleted folder on create:', e);
     }
 
-    const folders = await getLocalFolders();
-    const existing = folders.find((f) => f.id === slug);
-    if (existing) {
-        return existing;
-    }
     folders.unshift(folder);
     await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(folders));
+
+    if (FS_FOLDERS_DIR) {
+        try {
+            await ensureFsDirectories();
+            await FileSystem.writeAsStringAsync(
+                `${FS_FOLDERS_DIR}${uniqueSlug}.json`,
+                JSON.stringify(folder),
+                { encoding: FileSystem.EncodingType.UTF8 }
+            );
+        } catch (fsErr) {
+            console.warn('Filesystem folder write fallback:', fsErr);
+        }
+    }
 
     try {
         const user = await ensureAnonymousAuth();
         if (user && db) {
             const userId = user.uid;
-            const subjectDocRef = doc(db, `users/${userId}/subjects/${slug}`);
+            const subjectDocRef = doc(db, `users/${userId}/subjects/${uniqueSlug}`);
             await setDoc(subjectDocRef, folder, { merge: true });
         }
     } catch (e) {
@@ -610,7 +750,20 @@ export async function deleteSubjectFolder(folderIdOrSlug: string): Promise<boole
         );
         await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(updatedFolders));
 
-        // 3. Remove all notes belonging to this folder from local storage
+        // 3. Remove partitioned key and filesystem folder
+        await AsyncStorage.removeItem(`${FOLDER_NOTES_PREFIX}${idToRemove}`).catch(() => {});
+        if (folderIdOrSlug !== idToRemove) {
+            await AsyncStorage.removeItem(`${FOLDER_NOTES_PREFIX}${folderIdOrSlug}`).catch(() => {});
+        }
+        if (FS_FOLDERS_DIR) {
+            try {
+                await FileSystem.deleteAsync(`${FS_FOLDERS_DIR}${idToRemove}.json`, { idempotent: true });
+            } catch {
+                // ignore
+            }
+        }
+
+        // 4. Remove all notes belonging to this folder from local storage
         const allNotes = await getLocalNotes();
         const remainingNotes = allNotes.filter(
             (n) =>
@@ -623,7 +776,7 @@ export async function deleteSubjectFolder(folderIdOrSlug: string): Promise<boole
         );
         await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(remainingNotes));
 
-        // 4. Delete folder from Firebase if available
+        // 5. Delete folder from Firebase if available
         try {
             const user = await ensureAnonymousAuth();
             if (user && db) {
@@ -759,14 +912,38 @@ export async function fetchSubjectFolders(): Promise<SubjectFolder[]> {
 }
 
 export async function fetchNotesBySubject(subjectSlug: string): Promise<SavedNote[]> {
-    const allLocalNotes = await getLocalNotes();
-    const localSubjectNotes = allLocalNotes.filter(
-        (n) =>
-            n.subjectSlug === subjectSlug ||
-            subjectsMatch(n.subjectSlug, subjectSlug) ||
-            subjectsMatch(n.subject, subjectSlug)
-    );
+    const partitionKey = `${FOLDER_NOTES_PREFIX}${subjectSlug}`;
+    let localSubjectNotes: SavedNote[] = [];
 
+    // 1. Check partitioned storage key first for instant O(1) folder load
+    try {
+        const partJson = await AsyncStorage.getItem(partitionKey);
+        if (partJson) {
+            const parsed = JSON.parse(partJson);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                localSubjectNotes = parsed;
+            }
+        }
+    } catch {
+        // continue to master list fallback
+    }
+
+    // 2. Fallback to all local notes if partition not yet initialized
+    if (localSubjectNotes.length === 0) {
+        const allLocalNotes = await getLocalNotes();
+        localSubjectNotes = allLocalNotes.filter(
+            (n) =>
+                n.subjectSlug === subjectSlug ||
+                subjectsMatch(n.subjectSlug, subjectSlug) ||
+                subjectsMatch(n.subject, subjectSlug)
+        );
+        // Backfill partition key
+        if (localSubjectNotes.length > 0) {
+            AsyncStorage.setItem(partitionKey, JSON.stringify(localSubjectNotes)).catch(() => {});
+        }
+    }
+
+    // 3. Remote Firebase sync for this folder
     try {
         const user = await ensureAnonymousAuth();
         if (user && db) {
@@ -790,7 +967,9 @@ export async function fetchNotesBySubject(subjectSlug: string): Promise<SavedNot
                                 : local?.imageUris || undefined,
                     });
                 }
-                return Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+                const merged = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+                AsyncStorage.setItem(partitionKey, JSON.stringify(merged)).catch(() => {});
+                return merged;
             }
         }
     } catch (err) {

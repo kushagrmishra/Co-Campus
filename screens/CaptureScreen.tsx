@@ -61,6 +61,7 @@ export const CaptureScreen: React.FC<CaptureScreenProps> = ({
     const [availableFolders, setAvailableFolders] = useState<SubjectFolder[]>([]);
     const [showFolderModal, setShowFolderModal] = useState<boolean>(false);
     const [newFolderName, setNewFolderName] = useState<string>('');
+    const [folderSearchText, setFolderSearchText] = useState<string>('');
 
     useEffect(() => {
         fetchSubjectFolders().then(setAvailableFolders).catch(console.error);
@@ -538,6 +539,24 @@ export const CaptureScreen: React.FC<CaptureScreenProps> = ({
                             </TouchableOpacity>
                         </View>
 
+                        {availableFolders.length > 3 && (
+                            <View style={styles.searchFolderRow}>
+                                <Ionicons name="search" size={14} color="#75777d" style={{ marginRight: 8 }} />
+                                <TextInput
+                                    style={styles.searchFolderInput}
+                                    placeholder={`Search ${availableFolders.length} folders...`}
+                                    placeholderTextColor="#75777d"
+                                    value={folderSearchText}
+                                    onChangeText={setFolderSearchText}
+                                />
+                                {folderSearchText.length > 0 && (
+                                    <TouchableOpacity onPress={() => setFolderSearchText('')}>
+                                        <Ionicons name="close-circle" size={15} color="#75777d" />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        )}
+
                         <ScrollView style={styles.folderList}>
                             <TouchableOpacity
                                 style={[
@@ -557,7 +576,9 @@ export const CaptureScreen: React.FC<CaptureScreenProps> = ({
                                 {selectedFolder === null && <Ionicons name="checkmark" size={18} color="#4b6456" />}
                             </TouchableOpacity>
 
-                            {availableFolders.map((f) => {
+                            {availableFolders
+                                .filter((f) => f.name.toLowerCase().includes(folderSearchText.trim().toLowerCase()))
+                                .map((f) => {
                                 const isSelected = selectedFolder?.id === f.id;
                                 return (
                                     <TouchableOpacity
@@ -1200,6 +1221,23 @@ const styles = StyleSheet.create({
         color: '#ffffff',
         fontWeight: '700',
         fontSize: 13,
+    },
+    searchFolderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#f4f3f0',
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: '#e9e8e5',
+    },
+    searchFolderInput: {
+        flex: 1,
+        fontSize: 13,
+        color: '#1a1c1a',
+        paddingVertical: 0,
     },
     folderList: {
         maxHeight: 280,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     StyleSheet,
     Text,
@@ -110,6 +110,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     // Create folder modal
     const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
     const [newFolderName, setNewFolderName] = useState<string>('');
+    const [folderSearchQuery, setFolderSearchQuery] = useState<string>('');
+
+    const filteredFolders = useMemo(() => {
+        const q = folderSearchQuery.trim().toLowerCase();
+        if (!q) return folders;
+        return folders.filter(
+            (f) => f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q)
+        );
+    }, [folders, folderSearchQuery]);
 
     // Exam Syllabus Scanning States
     const [showExamUploadModal, setShowExamUploadModal] = useState<boolean>(false);
@@ -144,20 +153,22 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     map.set(n.id, n);
                 }
 
-                for (const f of fetchedFolders.slice(0, 5)) {
-                    const subNotes = await fetchNotesBySubject(f.id);
-                    for (const n of subNotes) {
-                        const existing = map.get(n.id);
-                        map.set(n.id, {
-                            ...existing,
-                            ...n,
-                            imageUris:
-                                n.imageUris && n.imageUris.length > 0
-                                    ? n.imageUris
-                                    : existing?.imageUris || undefined,
-                        });
-                    }
-                }
+                await Promise.all(
+                    fetchedFolders.map(async (f) => {
+                        const subNotes = await fetchNotesBySubject(f.id);
+                        for (const n of subNotes) {
+                            const existing = map.get(n.id);
+                            map.set(n.id, {
+                                ...existing,
+                                ...n,
+                                imageUris:
+                                    n.imageUris && n.imageUris.length > 0
+                                        ? n.imageUris
+                                        : existing?.imageUris || undefined,
+                            });
+                        }
+                    })
+                );
 
                 const sorted = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
                 setAllRecentNotes(sorted);
@@ -536,9 +547,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     </View>
                 </View>
 
+                {/* Subject Folders Search Bar for unlimited folders */}
+                {folders.length > 2 && (
+                    <View style={styles.folderSearchRow}>
+                        <Ionicons name="search" size={15} color="#75777d" style={{ marginRight: 8 }} />
+                        <TextInput
+                            style={styles.folderSearchInput}
+                            placeholder={`Search all ${folders.length} folders...`}
+                            placeholderTextColor="#75777d"
+                            value={folderSearchQuery}
+                            onChangeText={setFolderSearchQuery}
+                        />
+                        {folderSearchQuery.length > 0 && (
+                            <TouchableOpacity onPress={() => setFolderSearchQuery('')}>
+                                <Ionicons name="close-circle" size={16} color="#75777d" />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                )}
+
                 <View style={styles.foldersGrid}>
                     {folders.length > 0 ? (
-                        folders.map((folder, index) => {
+                        filteredFolders.length > 0 ? (
+                            filteredFolders.map((folder, index) => {
                             const fallbackPreset = DEFAULT_SUBJECTS[index % DEFAULT_SUBJECTS.length];
                             return (
                                 <TouchableOpacity
@@ -607,16 +638,26 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                             );
                         })
                     ) : (
-                        <View style={styles.emptyFolderState}>
-                            <View style={styles.emptyFolderIconBox}>
-                                <Ionicons name="folder-open-outline" size={26} color="#4b6456" />
-                            </View>
-                            <Text style={styles.emptyFolderTitle}>No Subject Folders</Text>
-                            <Text style={styles.emptyFolderSubtitle}>
-                                All folders have been removed. Tap below to create a new subject folder anytime.
-                            </Text>
+                        <View style={styles.emptyFolderSearchState}>
+                            <Ionicons name="search-outline" size={22} color="#75777d" style={{ marginBottom: 6 }} />
+                            <Text style={styles.emptyFolderSearchTitle}>No matching folders</Text>
+                            <Text style={styles.emptyFolderSearchSub}>No folder found matching "{folderSearchQuery}"</Text>
+                            <TouchableOpacity style={styles.clearSearchBtn} onPress={() => setFolderSearchQuery('')}>
+                                <Text style={styles.clearSearchBtnText}>Clear Search</Text>
+                            </TouchableOpacity>
                         </View>
-                    )}
+                    )
+                ) : (
+                    <View style={styles.emptyFolderState}>
+                        <View style={styles.emptyFolderIconBox}>
+                            <Ionicons name="folder-open-outline" size={26} color="#4b6456" />
+                        </View>
+                        <Text style={styles.emptyFolderTitle}>No Subject Folders</Text>
+                        <Text style={styles.emptyFolderSubtitle}>
+                            All folders have been removed. Tap below to create a new subject folder anytime.
+                        </Text>
+                    </View>
+                )}
 
                     {/* Create Subject Folder Button */}
                     <TouchableOpacity
@@ -1300,6 +1341,55 @@ const styles = StyleSheet.create({
     },
     manageText: {
         fontSize: 13,
+        fontWeight: '600',
+        color: '#4b6456',
+    },
+    folderSearchRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#f2f0ea',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        marginBottom: 14,
+        borderWidth: 1,
+        borderColor: '#e5e2db',
+    },
+    folderSearchInput: {
+        flex: 1,
+        fontSize: 13,
+        color: '#182232',
+        paddingVertical: 0,
+    },
+    emptyFolderSearchState: {
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        padding: 24,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#e8e6e1',
+        borderStyle: 'dashed',
+    },
+    emptyFolderSearchTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#182232',
+        marginBottom: 4,
+    },
+    emptyFolderSearchSub: {
+        fontSize: 12,
+        color: '#75777d',
+        textAlign: 'center',
+        marginBottom: 12,
+    },
+    clearSearchBtn: {
+        backgroundColor: '#e1ede6',
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 8,
+    },
+    clearSearchBtnText: {
+        fontSize: 12,
         fontWeight: '600',
         color: '#4b6456',
     },
