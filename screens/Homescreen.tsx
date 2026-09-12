@@ -33,6 +33,7 @@ import {
     DISCRETE_NOTE,
 } from '../services/storage';
 import { extractExamFromSyllabus, ExtractedExamInfo } from '../services/llm';
+import { VoiceSettingsModal } from '../components/VoiceSettingsModal';
 import { FolderDetailScreen } from './FolderDetailScreen';
 
 interface HomeScreenProps {
@@ -119,6 +120,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const [extractedExam, setExtractedExam] = useState<ExtractedExamInfo | null>(null);
     const [selectedFolderForExam, setSelectedFolderForExam] = useState<string>('');
     const [showExamConfirmModal, setShowExamConfirmModal] = useState<boolean>(false);
+    const [showVoiceModal, setShowVoiceModal] = useState<boolean>(false);
 
     const loadData = useCallback(async () => {
         try {
@@ -382,6 +384,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     </TouchableOpacity>
                 </View>
                 <View style={styles.headerRight}>
+                    <TouchableOpacity
+                        style={styles.iconCircleBtn}
+                        onPress={() => setShowVoiceModal(true)}
+                        accessibilityLabel="Customize AI Voice"
+                    >
+                        <Ionicons name="sparkles-outline" size={16} color="#1b4d3e" />
+                    </TouchableOpacity>
                     <TouchableOpacity
                         style={styles.iconCircleBtn}
                         onPress={() => setShowCreateModal(true)}
@@ -986,6 +995,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     </View>
                 </Modal>
             )}
+
+            {/* AI Voice Persona Customization Modal */}
+            <VoiceSettingsModal
+                visible={showVoiceModal}
+                onClose={() => setShowVoiceModal(false)}
+            />
         </View>
     );
 };

@@ -22,6 +22,13 @@ import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, s
 import { SavedNote, YouTubeVideo } from '../types';
 import { getCuratedClipsForSubject } from '../services/youtube';
 import { askNoteAiDirectly, transcribeAudio } from '../services/llm';
+import {
+    speakWithVoice,
+    stopVoicePlayback,
+    getVoiceSettings,
+    VOICE_PERSONAS,
+} from '../services/voice';
+import { VoiceSettingsModal } from '../components/VoiceSettingsModal';
 
 interface ResultsScreenProps {
     note: SavedNote;
@@ -52,6 +59,16 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     const [isListening, setIsListening] = useState<boolean>(false);
     const [isPlayingAnswerVoice, setIsPlayingAnswerVoice] = useState<boolean>(false);
     const [listeningStatus, setListeningStatus] = useState<string>('Listening for voice...');
+    const [showVoiceModal, setShowVoiceModal] = useState<boolean>(false);
+    const [currentVoiceName, setCurrentVoiceName] = useState<string>('Breeze');
+
+    // Load active voice persona
+    useEffect(() => {
+        getVoiceSettings().then((s) => {
+            const matched = VOICE_PERSONAS.find((p) => p.id === s.personaId);
+            if (matched) setCurrentVoiceName(matched.name);
+        });
+    }, []);
 
     // Waveform & Pulse Animations
     const micPulseAnim = useRef(new Animated.Value(1)).current;
@@ -132,7 +149,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     // Stop speech and mic on unmount
     useEffect(() => {
         return () => {
-            Speech.stop();
+            stopVoicePlayback();
             if (recognitionRef.current) {
                 try {
                     recognitionRef.current.stop();
@@ -374,18 +391,16 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
     const handleToggleAnswerVoice = async () => {
         if (isPlayingAnswerVoice) {
-            await Speech.stop();
+            await stopVoicePlayback();
             setIsPlayingAnswerVoice(false);
         } else {
             if (!currentAiAnswer) return;
             if (isPlayingAudio) {
-                await Speech.stop();
+                await stopVoicePlayback();
                 setIsPlayingAudio(false);
             }
             setIsPlayingAnswerVoice(true);
-            Speech.speak(currentAiAnswer, {
-                rate: 0.95,
-                pitch: 1.0,
+            speakWithVoice(currentAiAnswer, {
                 onDone: () => setIsPlayingAnswerVoice(false),
                 onStopped: () => setIsPlayingAnswerVoice(false),
                 onError: () => setIsPlayingAnswerVoice(false),
@@ -395,20 +410,18 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
     const handleToggleAudio = async () => {
         if (isPlayingAudio) {
-            await Speech.stop();
+            await stopVoicePlayback();
             setIsPlayingAudio(false);
         } else {
             if (isPlayingAnswerVoice) {
-                await Speech.stop();
+                await stopVoicePlayback();
                 setIsPlayingAnswerVoice(false);
             }
             setIsPlayingAudio(true);
             const textToSpeak = `${note.title}. Summary: ${note.extraction.generatedNotes}. Key Topics: ${note.extraction.topics
                 .map((t) => t.heading)
                 .join('. ')}`;
-            Speech.speak(textToSpeak, {
-                rate: 0.95,
-                pitch: 1.0,
+            speakWithVoice(textToSpeak, {
                 onDone: () => setIsPlayingAudio(false),
                 onStopped: () => setIsPlayingAudio(false),
                 onError: () => setIsPlayingAudio(false),
@@ -418,11 +431,11 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
     const handleBack = async () => {
         if (isPlayingAudio) {
-            await Speech.stop();
+            await stopVoicePlayback();
             setIsPlayingAudio(false);
         }
         if (isPlayingAnswerVoice) {
-            await Speech.stop();
+            await stopVoicePlayback();
             setIsPlayingAnswerVoice(false);
         }
         if (isListening) {
@@ -530,6 +543,15 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                             >
                                 {isPlayingAudio ? 'Stop Audio' : 'Listen (Audio)'}
                             </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={styles.mediaPill}
+                            onPress={() => setShowVoiceModal(true)}
+                            activeOpacity={0.85}
+                        >
+                            <Ionicons name="sparkles-outline" size={14} color="#1b4d3e" />
+                            <Text style={styles.mediaPillText}>Voice: {currentVoiceName}</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -728,37 +750,49 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                                 <View style={styles.answerBody}>
                                     <Text style={styles.answerText}>{currentAiAnswer}</Text>
 
-                                    {/* Action Buttons: Voice Playback & Copy/Dismiss */}
+                                    {/* Action Buttons: Voice Playback, Persona Selector & Dismiss */}
                                     <View style={styles.answerActionsRow}>
-                                        <TouchableOpacity
-                                            style={[
-                                                styles.voiceAnswerBtn,
-                                                isPlayingAnswerVoice && styles.voiceAnswerBtnActive,
-                                            ]}
-                                            onPress={handleToggleAnswerVoice}
-                                            activeOpacity={0.85}
-                                        >
-                                            <Ionicons
-                                                name={isPlayingAnswerVoice ? 'stop-circle' : 'volume-high-outline'}
-                                                size={15}
-                                                color={isPlayingAnswerVoice ? '#ba1a1a' : '#1b4d3e'}
-                                                style={{ marginRight: 4 }}
-                                            />
-                                            <Text
+                                        <View style={styles.voiceAnswerLeftGroup}>
+                                            <TouchableOpacity
                                                 style={[
-                                                    styles.voiceAnswerBtnText,
-                                                    isPlayingAnswerVoice && styles.voiceAnswerBtnActiveText,
+                                                    styles.voiceAnswerBtn,
+                                                    isPlayingAnswerVoice && styles.voiceAnswerBtnActive,
                                                 ]}
+                                                onPress={handleToggleAnswerVoice}
+                                                activeOpacity={0.85}
                                             >
-                                                {isPlayingAnswerVoice ? 'Stop Voice' : 'Listen (Voice)'}
-                                            </Text>
-                                        </TouchableOpacity>
+                                                <Ionicons
+                                                    name={isPlayingAnswerVoice ? 'stop-circle' : 'volume-high-outline'}
+                                                    size={15}
+                                                    color={isPlayingAnswerVoice ? '#ba1a1a' : '#1b4d3e'}
+                                                    style={{ marginRight: 4 }}
+                                                />
+                                                <Text
+                                                    style={[
+                                                        styles.voiceAnswerBtnText,
+                                                        isPlayingAnswerVoice && styles.voiceAnswerBtnActiveText,
+                                                    ]}
+                                                >
+                                                    {isPlayingAnswerVoice ? 'Stop Voice' : 'Listen (Voice)'}
+                                                </Text>
+                                            </TouchableOpacity>
+
+                                            <TouchableOpacity
+                                                style={styles.voiceCustomizationBtn}
+                                                onPress={() => setShowVoiceModal(true)}
+                                                activeOpacity={0.85}
+                                            >
+                                                <Ionicons name="sparkles" size={12} color="#1b4d3e" style={{ marginRight: 4 }} />
+                                                <Text style={styles.voiceCustomizationBtnText}>{currentVoiceName}</Text>
+                                                <Ionicons name="chevron-down" size={11} color="#1b4d3e" style={{ marginLeft: 3 }} />
+                                            </TouchableOpacity>
+                                        </View>
 
                                         <TouchableOpacity
                                             style={styles.dismissAnswerBtn}
                                             onPress={() => {
                                                 if (isPlayingAnswerVoice) {
-                                                    Speech.stop();
+                                                    stopVoicePlayback();
                                                     setIsPlayingAnswerVoice(false);
                                                 }
                                                 setCurrentAiAnswer('');
@@ -1027,6 +1061,16 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                     </View>
                 </View>
             </Modal>
+
+            {/* AI Voice Customization Modal (ChatGPT-like Persona Selector) */}
+            <VoiceSettingsModal
+                visible={showVoiceModal}
+                onClose={() => setShowVoiceModal(false)}
+                onVoiceChanged={(newSettings) => {
+                    const matched = VOICE_PERSONAS.find((p) => p.id === newSettings.personaId);
+                    if (matched) setCurrentVoiceName(matched.name);
+                }}
+            />
 
             {/* Single Modern Floating Mic Button (Translucent Frosted Glass) */}
             <TouchableOpacity
@@ -2004,6 +2048,26 @@ const styles = StyleSheet.create({
     },
     voiceAnswerBtnActiveText: {
         color: '#ba1a1a',
+    },
+    voiceAnswerLeftGroup: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    voiceCustomizationBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#e8f5ed',
+        borderWidth: 1,
+        borderColor: '#cde9d8',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 10,
+        marginLeft: 8,
+    },
+    voiceCustomizationBtnText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#1b4d3e',
     },
     dismissAnswerBtn: {
         paddingHorizontal: 8,
