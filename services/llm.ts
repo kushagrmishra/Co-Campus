@@ -3,6 +3,8 @@ import { subjectsMatch } from './storage';
 
 const LLM_API_KEY = process.env.EXPO_PUBLIC_LLM_API_KEY;
 const LLM_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_TEXT_MODEL = 'openai/gpt-oss-20b';
+const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
 const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
 
@@ -195,7 +197,7 @@ Constraints:
         for (const img of images) {
             parts.push({ inlineData: { mimeType: 'image/jpeg', data: img } });
         }
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
         const response = await fetch(geminiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -248,8 +250,9 @@ ${JSON.stringify(extraction)}
                 Authorization: `Bearer ${LLM_API_KEY}`,
             },
             body: JSON.stringify({
-                model: 'llama-3.1-8b-instant',
+                model: GROQ_TEXT_MODEL,
                 temperature: 0.3,
+                response_format: { type: 'json_object' },
                 messages: [{ role: 'user', content: promptText }],
             }),
         });
@@ -312,7 +315,7 @@ No preambles, no markdown blocks.
 
     // 2. Fallback to Gemini
     if (!candidate && GEMINI_API_KEY) {
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
         const response = await fetch(geminiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -595,7 +598,7 @@ No preambles, no markdown formatting.
 
             // Fallback to Gemini
             if (!rawText && GEMINI_API_KEY) {
-                const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
+                const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
                 const response = await fetch(geminiUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -681,7 +684,7 @@ Instructions:
 
     if (GEMINI_API_KEY) {
         try {
-            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;  
             const response = await fetch(geminiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -717,7 +720,7 @@ Answer directly without emojis or preambles.
                     Authorization: `Bearer ${LLM_API_KEY}`,
                 },
                 body: JSON.stringify({
-                    model: 'llama-3.1-8b-instant',
+                    model: GROQ_TEXT_MODEL,
                     temperature: 0.3,
                     messages: [{ role: 'user', content: prompt }],
                 }),
