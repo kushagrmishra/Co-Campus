@@ -1,11 +1,10 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
     StyleSheet,
     Text,
     View,
     TouchableOpacity,
     StatusBar,
-    ActivityIndicator,
     Platform,
     PanResponder,
     Animated,
@@ -21,7 +20,7 @@ import { StudyScreen } from './screens/StudyScreen';
 import { LoginScreen, AUTH_STORAGE_KEY } from './screens/LoginScreen';
 import { AppSkeleton } from './components/AppSkeleton';
 import { SavedNote, SubjectFolder } from './types';
-import { fetchSubjectFolders, fetchAllLocalNotes, fetchNotesBySubject } from './services/storage';
+import { fetchSubjectFolders, fetchAllLocalNotes } from './services/storage';
 import { CircleMenu } from './components/CircleMenu';
 
 type BottomTab = 'folders' | 'notes' | 'study' | 'stats';
@@ -282,7 +281,7 @@ function MainApp() {
             onStartShouldSetPanResponder: () => false,
             onStartShouldSetPanResponderCapture: () => false,
             onMoveShouldSetPanResponderCapture: () => false,
-            onMoveShouldSetPanResponder: (evt, gestureState) => {
+            onMoveShouldSetPanResponder: (_evt, gestureState) => {
                 if (isStudyFocusedReview || isAnimatingTabRef.current) return false;
 
                 // Horizontal swipe across tabs (ensure dominant horizontal intent)
@@ -315,7 +314,7 @@ function MainApp() {
                     dragX.setValue(dx);
                 }
             },
-            onPanResponderRelease: (evt, gestureState) => {
+            onPanResponderRelease: (_evt, gestureState) => {
                 if (isAnimatingTabRef.current) return;
 
                 // Check for horizontal tab navigation swipe
@@ -438,7 +437,7 @@ function MainApp() {
         setOverlay('none');
     }, []);
 
-    const handleStartQuiz = useCallback((note: SavedNote) => {
+    const handleStartQuiz = useCallback(() => {
         setSelectedNote(null);
         setOverlay('none');
         setCurrentTab('study');

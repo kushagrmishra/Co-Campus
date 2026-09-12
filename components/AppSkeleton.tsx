@@ -3,7 +3,6 @@ import {
     StyleSheet,
     View,
     Animated,
-    Dimensions,
     Platform,
     StatusBar,
     ScrollView,

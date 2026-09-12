@@ -45,7 +45,6 @@ export const CaptureScreen: React.FC<CaptureScreenProps> = ({
 }) => {
     const insets = useSafeAreaInsets();
     const topPadding = Platform.OS === 'android' ? Math.max(insets.top, StatusBar.currentHeight || 0, 16) : Math.max(insets.top, 10);
-    const bottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 16 : 12);
 
     const [images, setImages] = useState<CapturedImage[]>([]);
     const [activePreviewIndex, setActivePreviewIndex] = useState<number>(0);

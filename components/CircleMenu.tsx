@@ -6,7 +6,6 @@ import {
     TouchableOpacity,
     Animated,
     Platform,
-    Dimensions,
     PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';

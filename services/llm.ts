@@ -96,6 +96,66 @@ function sanitizeJsonResponse(rawText: string): string {
     return cleaned;
 }
 
+const RESPONSE_CACHE_LIMIT = 50;
+const responseCache = new Map<string, string>();
+
+function cacheKey(scope: string, ...parts: string[]): string {
+    return `${scope}:${parts.join('|')}`;
+}
+
+function getCachedResponse(key: string): string | undefined {
+    const value = responseCache.get(key);
+    if (value !== undefined) {
+        responseCache.delete(key);
+        responseCache.set(key, value);
+    }
+    return value;
+}
+
+function setCachedResponse(key: string, value: string): void {
+    responseCache.delete(key);
+    responseCache.set(key, value);
+    while (responseCache.size > RESPONSE_CACHE_LIMIT) {
+        const oldestKey = responseCache.keys().next().value;
+        if (!oldestKey) break;
+        responseCache.delete(oldestKey);
+    }
+}
+
+function compactExtractionContext(extraction: ExtractionData, rawTextLimit: number | null = null): string {
+    const topics = extraction.topics
+        .map((topic) => `${topic.heading}: ${topic.bullets.join('; ')}`)
+        .join('\n');
+    const tasks = extraction.tasks
+        .map((task) => `${task.title} | due: ${task.dueDate || 'none'} | ${task.notes || 'no notes'}`)
+        .join('\n');
+
+    const context = [
+        `Subject: ${extraction.subject}`,
+        `Title: ${extraction.title}`,
+        `Summary: ${extraction.generatedNotes}`,
+        `Topics:\n${topics || 'none'}`,
+        `Tasks:\n${tasks || 'none'}`,
+    ];
+    if (rawTextLimit !== 0) {
+        context.push(`OCR:\n${rawTextLimit === null ? extraction.rawText : extraction.rawText.substring(0, rawTextLimit)}`);
+    }
+    return context.join('\n');
+}
+
+function compactNoteContext(note: SavedNote): string {
+    const flashcards = (note.flashcards || [])
+        .map((card) => `Q: ${card.question}\nA: ${card.answer}`)
+        .join('\n');
+
+    return [
+        `Subject: ${note.subject}`,
+        `Title: ${note.title}`,
+        compactExtractionContext(note.extraction, 1000),
+        `Flashcards:\n${flashcards || 'none'}`,
+    ].join('\n');
+}
+
 /**
  * Transcribe an audio file using Groq Whisper API (whisper-large-v3-turbo).
  * Accepts a native local file URI or web Blob.
@@ -154,31 +214,13 @@ export async function extractStudyMaterial(
         : `Deduce a clear, concise subject (2-4 words, e.g. "Calculus II", "Data Structures", "Organic Chemistry") for folder grouping.`;
 
     const existingContextInstruction = existingExtraction
-        ? `\nNOTE: You are appending new pages/photos to an existing note titled "${existingExtraction.title}" in subject "${existingExtraction.subject}".
-Existing summary: "${existingExtraction.generatedNotes}"
-Existing topics: ${JSON.stringify(existingExtraction.topics)}
-Please merge and synthesize the previous study material with the content from these new images into a cohesive, updated note, keeping existing topics and adding new ones where appropriate.`
+        ? `\nExisting note context (merge with the new images; preserve correct facts and add new ones):\n${compactExtractionContext(existingExtraction, 0)}`
         : '';
 
-    const promptText = `
-Analyze the ${images.length} provided image(s) of a whiteboard/lecture slides/notebook pages.
-${subjectInstruction}
-${existingContextInstruction}
-
-Extract structured study content and return ONLY a valid JSON object strictly matching this schema:
-{
-  "subject": string,          // Subject name for folder grouping
-  "title": string,            // Short descriptive title for this note
-  "topics": [{ "heading": string, "bullets": string[] }],
-  "tasks": [{ "title": string, "dueDate": string | null, "notes": string | null }],
-  "rawText": string,          // Best-effort OCR transcript of all images
-  "generatedNotes": string    // 150-400 word cohesive, human-readable study summary
-}
-Constraints:
-- Return ONLY the JSON object. Do not wrap in markdown code blocks or add preambles/postscript.
-- If no due dates are visible, "dueDate" must be null.
-- "generatedNotes" should read like a cohesive written summary, synthesizing all pages, not just a bullet dump.
-`;
+    const promptText = `Analyze ${images.length} lecture/document image(s). ${subjectInstruction}${existingContextInstruction}
+Return ONLY JSON with this exact shape:
+{"subject":string,"title":string,"topics":[{"heading":string,"bullets":string[]}],"tasks":[{"title":string,"dueDate":string|null,"notes":string|null}],"rawText":string,"generatedNotes":string}
+Rules: dueDate is null when absent; generatedNotes is a cohesive 150-400 word synthesis; no markdown or extra text.`;
 
     let rawContent = '';
 
@@ -231,16 +273,9 @@ export async function generateFlashcards(extraction: ExtractionData): Promise<Fl
         throw new Error('EXPO_PUBLIC_LLM_API_KEY is not configured in environment variables.');
     }
 
-    const promptText = `
-Based on the following extracted study material, generate at least 10 high-quality flashcards for learning and self-testing.
-Return ONLY a JSON object matching this schema:
-{ "flashcards": [{ "question": string, "answer": string }] }
-
-No preambles, no markdown fences.
-
-Extracted Data:
-${JSON.stringify(extraction)}
-`;
+    const promptText = `Create at least 10 high-quality study flashcards from the material below.
+Return ONLY {"flashcards":[{"question":string,"answer":string}]} with no markdown or extra text.
+${compactExtractionContext(extraction)}`;
 
     try {
         const response = await fetch(LLM_ENDPOINT, {
@@ -569,22 +604,13 @@ export async function generateMCQs(
 ): Promise<MCQQuestion[]> {
     // Generate MCQs via LLM (OpenRouter first, then Gemini)
     if ((OPENROUTER_API_KEY || GEMINI_API_KEY) && noteText && noteText.trim().length > 30) {
+                const mcqCacheKey = cacheKey('mcq', subject, level, noteText.trim());
+                const cached = getCachedResponse(mcqCacheKey);
+                if (cached) return JSON.parse(cached) as MCQQuestion[];
         try {
-            const prompt = `
-Generate 4 multiple-choice exam practice questions (MCQ) for the subject "${subject}" at difficulty level "${level}".
-Context Notes: "${noteText.substring(0, 1200)}"
-
-Return ONLY a JSON array of questions strictly following this structure:
-[
-  {
-    "question": string,
-    "options": [string, string, string, string],
-    "correctIndex": number (0 to 3),
-    "explanation": string
-  }
-]
-No preambles, no markdown formatting.
-`;
+                        const prompt = `Create 4 ${level}-level MCQs for ${subject} from these notes (four options each).
+Return ONLY JSON array [{"question":string,"options":[string,string,string,string],"correctIndex":0,"explanation":string]. No markdown.
+Notes: ${noteText.substring(0, 1200)}`;
             let rawText = '';
 
             // Try OpenRouter first
@@ -616,7 +642,7 @@ No preambles, no markdown formatting.
             if (rawText) {
                 const parsed = JSON.parse(sanitizeJsonResponse(rawText));
                 if (Array.isArray(parsed) && parsed.length > 0) {
-                    return parsed.map((item, idx) => ({
+                    const questions = parsed.map((item, idx) => ({
                         id: `ai_mcq_${Date.now()}_${idx}`,
                         subject,
                         level,
@@ -625,6 +651,8 @@ No preambles, no markdown formatting.
                         correctIndex: typeof item.correctIndex === 'number' ? item.correctIndex : 0,
                         explanation: item.explanation || 'Verified correct choice based on course principles.',
                     }));
+                    setCachedResponse(mcqCacheKey, JSON.stringify(questions));
+                    return questions;
                 }
             }
         } catch (e) {
@@ -651,32 +679,25 @@ export async function askNoteAiDirectly(note: SavedNote, question: string): Prom
     const trimmed = question.trim();
     if (!trimmed) return 'Please ask a question about your lecture notes.';
 
+    const qaCacheKey = cacheKey('qa', note.id, String(note.createdAt), trimmed.toLowerCase());
+    const cachedAnswer = getCachedResponse(qaCacheKey);
+    if (cachedAnswer) return cachedAnswer;
+
     // 1. Try OpenRouter first, then Gemini
-    const qaPrompt = `
-You are the CoCampus Collegiate AI Study Copilot. Answer the student's question directly, accurately, and concisely based strictly on their lecture notes.
-
-Course Subject: ${note.subject}
-Note Title: ${note.title}
-Note Summary: ${note.extraction.generatedNotes}
-Key Topics: ${JSON.stringify(note.extraction.topics)}
-Tasks & Deadlines: ${JSON.stringify(note.extraction.tasks)}
-Flashcards: ${JSON.stringify(note.flashcards || [])}
-Raw Transcribed Content: ${note.extraction.rawText.substring(0, 1000)}
-
-Student Question: "${trimmed}"
-
-Instructions:
-- Provide a direct, authoritative, collegiate-level answer immediately in the first sentence.
-- If asked for a definition or formula, provide it clearly with its mathematical/logical components.
-- Explain intuitively with a concrete example if appropriate.
-- Keep the response between 2 to 4 concise paragraphs or bullet points.
-- Do NOT use raw emojis. Keep styling strictly text and bullets.
-`;
+    const qaPrompt = `You are the CoCampus study copilot. Answer strictly from the note context below.
+Lead with the direct answer. Include formulas/definitions and a brief example when useful. Use 2-4 concise paragraphs or bullets. No emojis.
+Question: ${trimmed}
+Note context:
+${compactNoteContext(note)}`;
 
     if (OPENROUTER_API_KEY) {
         try {
             const answer = await callOpenRouterText(qaPrompt, 0.3);
-            if (answer && answer.trim().length > 0) return answer.trim();
+            if (answer && answer.trim().length > 0) {
+                const normalized = answer.trim();
+                setCachedResponse(qaCacheKey, normalized);
+                return normalized;
+            }
         } catch (e) {
             console.warn('OpenRouter Q&A failed, trying Gemini:', e);
         }
@@ -696,7 +717,11 @@ Instructions:
             if (response.ok) {
                 const resData = await response.json();
                 const answer = resData.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (answer && answer.trim().length > 0) return answer.trim();
+                if (answer && answer.trim().length > 0) {
+                    const normalized = answer.trim();
+                    setCachedResponse(qaCacheKey, normalized);
+                    return normalized;
+                }
             }
         } catch (e) {
             console.warn('Gemini Q&A failed, falling back to local synthesis:', e);
@@ -706,13 +731,10 @@ Instructions:
     // 2. Try Groq/LLM API if key is available
     if (LLM_API_KEY) {
         try {
-            const prompt = `
-You are the CoCampus Collegiate AI Study Copilot. Answer the student's question directly and concisely based on their lecture note: "${note.title}" (${note.subject}).
-Note content: ${note.extraction.generatedNotes}
-Topics: ${JSON.stringify(note.extraction.topics)}
-Question: "${trimmed}"
-Answer directly without emojis or preambles.
-`;
+            const prompt = `Answer this question strictly from the note context. Be direct and concise; no emojis or preamble.
+Question: ${trimmed}
+Context:
+${compactNoteContext(note)}`;
             const response = await fetch(LLM_ENDPOINT, {
                 method: 'POST',
                 headers: {
@@ -729,7 +751,9 @@ Answer directly without emojis or preambles.
                 const data = await response.json();
                 const answer = data.choices?.[0]?.message?.content;
                 if (answer && answer.trim().length > 0) {
-                    return answer.trim();
+                    const normalized = answer.trim();
+                    setCachedResponse(qaCacheKey, normalized);
+                    return normalized;
                 }
             }
         } catch (e) {
