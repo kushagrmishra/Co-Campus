@@ -14,6 +14,7 @@ import {
     Animated,
     ActivityIndicator,
     Alert,
+    Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -78,10 +79,20 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     const waveAnim4 = useRef(new Animated.Value(18)).current;
     const scrollViewRef = useRef<ScrollView>(null);
     const aiSectionYRef = useRef<number>(0);
+    const digestYRef = useRef<number>(0);
+    const tasksYRef = useRef<number>(0);
+    const topicsYRef = useRef<number>(0);
+    const videosYRef = useRef<number>(0);
     const recognitionRef = useRef<any>(null);
     const isListeningRef = useRef<boolean>(false);
     const latestTranscriptRef = useRef<string>('');
     const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+
+    const scrollToY = useCallback((y: number) => {
+        if (scrollViewRef.current) {
+            scrollViewRef.current.scrollTo({ y: Math.max(0, y - 24), animated: true });
+        }
+    }, []);
 
     // Mic Pulsing and Waveform loop
     useEffect(() => {
@@ -201,6 +212,20 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
     const toggleTopic = (index: number) => {
         setExpandedTopics((prev) => ({ ...prev, [index]: !prev[index] }));
+    };
+
+    const handleShareNote = async () => {
+        try {
+            const topicsSummary = note.extraction.topics
+                .map((t, idx) => `${idx + 1}. ${t.heading}\n${t.bullets.map((b) => `  • ${b}`).join('\n')}`)
+                .join('\n\n');
+            await Share.share({
+                title: `${note.title} - ${note.subject}`,
+                message: `📚 ${note.title} (${note.subject})\n\n${note.extraction.generatedNotes}\n\nKey Concepts:\n${topicsSummary}\n\nCoCampus Academic Notes`,
+            });
+        } catch (e) {
+            console.warn('Share note error:', e);
+        }
     };
 
     const handleAskAi = useCallback(
@@ -547,48 +572,143 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                         Transcribed with AI Vision • {pageCount} photo{pageCount > 1 ? 's' : ''} synthesized
                     </Text>
 
-                    {/* Quick Media / Audio / Mic Pills */}
-                    <View style={styles.quickPillsRow}>
+                    {/* Horizontal Options Scroll Bar directly above Whiteboard & Document Photos */}
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.optionsScrollContent}
+                        style={styles.optionsScrollView}
+                    >
+                        {/* Practice Cards */}
                         <TouchableOpacity
-                            style={styles.mediaPill}
-                            onPress={() => setShowPhotosModal(true)}
+                            style={styles.optionsChipPrimary}
+                            onPress={() => (onStartQuiz ? onStartQuiz(note) : null)}
+                            activeOpacity={0.85}
                         >
-                            <Ionicons name="images-outline" size={14} color="#45474c" />
-                            <Text style={styles.mediaPillText}>Whiteboard Snapshots ({pageCount})</Text>
+                            <Ionicons name="card" size={13} color="#ffffff" />
+                            <Text style={styles.optionsChipPrimaryText}>
+                                Practice Cards ({note.flashcards?.length || 0})
+                            </Text>
                         </TouchableOpacity>
 
+                        {/* Executive Digest */}
                         <TouchableOpacity
-                            style={[styles.mediaPill, isPlayingAudio && styles.mediaPillAudioActive]}
+                            style={styles.optionsChip}
+                            onPress={() => scrollToY(digestYRef.current)}
+                            activeOpacity={0.85}
+                        >
+                            <Ionicons name="book-outline" size={13} color="#182232" />
+                            <Text style={styles.optionsChipText}>Digest</Text>
+                        </TouchableOpacity>
+
+                        {/* Whiteboard Photos */}
+                        <TouchableOpacity
+                            style={styles.optionsChip}
+                            onPress={() => setShowPhotosModal(true)}
+                            activeOpacity={0.85}
+                        >
+                            <Ionicons name="images-outline" size={13} color="#182232" />
+                            <Text style={styles.optionsChipText}>Photos ({pageCount})</Text>
+                        </TouchableOpacity>
+
+                        {/* AI Copilot */}
+                        <TouchableOpacity
+                            style={styles.optionsChip}
+                            onPress={() => scrollToY(aiSectionYRef.current)}
+                            activeOpacity={0.85}
+                        >
+                            <Ionicons name="sparkles" size={13} color="#4b6456" />
+                            <Text style={styles.optionsChipText}>Ask Copilot</Text>
+                        </TouchableOpacity>
+
+                        {/* Topics Breakdown */}
+                        <TouchableOpacity
+                            style={styles.optionsChip}
+                            onPress={() => scrollToY(topicsYRef.current)}
+                            activeOpacity={0.85}
+                        >
+                            <Ionicons name="list-outline" size={13} color="#182232" />
+                            <Text style={styles.optionsChipText}>Topics ({note.extraction.topics.length})</Text>
+                        </TouchableOpacity>
+
+                        {/* Action Tasks */}
+                        <TouchableOpacity
+                            style={styles.optionsChip}
+                            onPress={() => scrollToY(tasksYRef.current)}
+                            activeOpacity={0.85}
+                        >
+                            <Ionicons name="checkbox-outline" size={13} color="#182232" />
+                            <Text style={styles.optionsChipText}>Tasks ({note.extraction.tasks.length})</Text>
+                        </TouchableOpacity>
+
+                        {/* Curated Videos */}
+                        {curatedClips.length > 0 && (
+                            <TouchableOpacity
+                                style={styles.optionsChip}
+                                onPress={() => scrollToY(videosYRef.current)}
+                                activeOpacity={0.85}
+                            >
+                                <Ionicons name="logo-youtube" size={13} color="#ba1a1a" />
+                                <Text style={styles.optionsChipText}>Videos ({curatedClips.length})</Text>
+                            </TouchableOpacity>
+                        )}
+
+                        {/* Add More Pages */}
+                        {onAddMorePages && (
+                            <TouchableOpacity
+                                style={styles.optionsChip}
+                                onPress={() => onAddMorePages(note)}
+                                activeOpacity={0.85}
+                            >
+                                <Ionicons name="add-circle-outline" size={13} color="#182232" />
+                                <Text style={styles.optionsChipText}>Add Pages</Text>
+                            </TouchableOpacity>
+                        )}
+
+                        {/* Audio TTS */}
+                        <TouchableOpacity
+                            style={[styles.optionsChip, isPlayingAudio && styles.optionsChipAudioActive]}
                             onPress={handleToggleAudio}
                             activeOpacity={0.85}
                         >
                             <Ionicons
                                 name={isPlayingAudio ? 'stop-circle' : 'volume-high-outline'}
-                                size={15}
-                                color={isPlayingAudio ? '#ba1a1a' : '#4b6456'}
+                                size={13}
+                                color={isPlayingAudio ? '#ffffff' : '#182232'}
                             />
                             <Text
                                 style={[
-                                    styles.mediaPillText,
-                                    isPlayingAudio && styles.mediaPillAudioActiveText,
+                                    styles.optionsChipText,
+                                    isPlayingAudio && styles.optionsChipAudioActiveText,
                                 ]}
                             >
-                                {isPlayingAudio ? 'Stop Audio' : 'Listen (Audio)'}
+                                {isPlayingAudio ? 'Stop Audio' : 'Listen'}
                             </Text>
                         </TouchableOpacity>
 
+                        {/* AI Voice Persona */}
                         <TouchableOpacity
-                            style={styles.mediaPill}
+                            style={styles.optionsChip}
                             onPress={() => setShowVoiceModal(true)}
                             activeOpacity={0.85}
                         >
-                            <Ionicons name="sparkles-outline" size={14} color="#1b4d3e" />
-                            <Text style={styles.mediaPillText}>Voice: {currentVoiceName}</Text>
+                            <Ionicons name="mic-outline" size={13} color="#1b4d3e" />
+                            <Text style={styles.optionsChipText}>Voice: {currentVoiceName}</Text>
                         </TouchableOpacity>
-                    </View>
+
+                        {/* Share Note */}
+                        <TouchableOpacity
+                            style={styles.optionsChip}
+                            onPress={handleShareNote}
+                            activeOpacity={0.85}
+                        >
+                            <Ionicons name="share-social-outline" size={13} color="#182232" />
+                            <Text style={styles.optionsChipText}>Share</Text>
+                        </TouchableOpacity>
+                    </ScrollView>
 
                     {/* Inline Whiteboard / Captured Snapshots Horizontal Carousel */}
-                    {note.imageUris && note.imageUris.length > 0 && (
+                    {note.imageUris && note.imageUris.length > 0 ? (
                         <View style={styles.inlineSnapshotsWrap}>
                             <View style={styles.inlineSnapshotsHeader}>
                                 <View style={styles.inlineSnapshotsTitleRow}>
@@ -619,11 +739,33 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                                 ))}
                             </ScrollView>
                         </View>
-                    )}
+                    ) : onAddMorePages ? (
+                        <TouchableOpacity
+                            style={styles.emptyWhiteboardPrompt}
+                            onPress={() => onAddMorePages(note)}
+                            activeOpacity={0.85}
+                        >
+                            <View style={styles.emptyWhiteboardLeft}>
+                                <Ionicons name="camera-outline" size={16} color="#4b6456" style={{ marginRight: 8 }} />
+                                <Text style={styles.emptyWhiteboardPromptText}>
+                                    Add whiteboard photos or handwritten scans to this note
+                                </Text>
+                            </View>
+                            <View style={styles.emptyWhiteboardAddBadge}>
+                                <Ionicons name="add" size={12} color="#ffffff" style={{ marginRight: 2 }} />
+                                <Text style={styles.emptyWhiteboardAddBadgeText}>Scan</Text>
+                            </View>
+                        </TouchableOpacity>
+                    ) : null}
                 </View>
 
                 {/* Executive AI Digest */}
-                <View style={styles.digestCard}>
+                <View
+                    style={styles.digestCard}
+                    onLayout={(e) => {
+                        digestYRef.current = e.nativeEvent.layout.y;
+                    }}
+                >
                     <View style={styles.digestHeaderRow}>
                         <View style={styles.digestTitleRow}>
                             <View style={styles.digestIconCircle}>
@@ -841,7 +983,12 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 </View>
 
                 {/* Detailed Breakdown */}
-                <View style={styles.sectionHeaderRow}>
+                <View
+                    style={styles.sectionHeaderRow}
+                    onLayout={(e) => {
+                        topicsYRef.current = e.nativeEvent.layout.y;
+                    }}
+                >
                     <Text style={styles.sectionHeading}>Detailed Breakdown</Text>
                     <Text style={styles.sectionCountText}>
                         {note.extraction.topics.length} Section{note.extraction.topics.length === 1 ? '' : 's'}
@@ -887,7 +1034,12 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 </View>
 
                 {/* Action Items & Deadlines */}
-                <View style={styles.sectionHeaderRow}>
+                <View
+                    style={styles.sectionHeaderRow}
+                    onLayout={(e) => {
+                        tasksYRef.current = e.nativeEvent.layout.y;
+                    }}
+                >
                     <View style={styles.actionItemsTitleRow}>
                         <Ionicons name="checkbox-outline" size={18} color="#4b6456" />
                         <Text style={styles.sectionHeading}>Action Items & Deadlines</Text>
@@ -936,7 +1088,12 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 </View>
 
                 {/* Curated YouTube Clips */}
-                <View style={styles.videosSection}>
+                <View
+                    style={styles.videosSection}
+                    onLayout={(e) => {
+                        videosYRef.current = e.nativeEvent.layout.y;
+                    }}
+                >
                     <View style={styles.sectionHeaderRow}>
                         <View style={styles.actionItemsTitleRow}>
                             <View style={styles.ytRedCircle}>
@@ -1261,6 +1418,95 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: '#45474c',
         marginBottom: 12,
+    },
+    optionsScrollView: {
+        marginBottom: 12,
+    },
+    optionsScrollContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingVertical: 4,
+        paddingRight: 16,
+    },
+    optionsChipPrimary: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#182232',
+        paddingHorizontal: 13,
+        paddingVertical: 8,
+        borderRadius: 20,
+        shadowColor: '#182232',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    optionsChipPrimaryText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#ffffff',
+    },
+    optionsChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#f4f3f0',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#e5e4df',
+    },
+    optionsChipText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#182232',
+    },
+    optionsChipAudioActive: {
+        backgroundColor: '#ba1a1a',
+        borderColor: '#991b1b',
+    },
+    optionsChipAudioActiveText: {
+        color: '#ffffff',
+    },
+    emptyWhiteboardPrompt: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: '#f7f6f3',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#e5e4df',
+        borderStyle: 'dashed',
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        marginBottom: 16,
+    },
+    emptyWhiteboardLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        marginRight: 10,
+    },
+    emptyWhiteboardPromptText: {
+        fontSize: 12,
+        color: '#45474c',
+        flex: 1,
+    },
+    emptyWhiteboardAddBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#4b6456',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
+    },
+    emptyWhiteboardAddBadgeText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#ffffff',
     },
     quickPillsRow: {
         flexDirection: 'row',

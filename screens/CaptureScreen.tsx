@@ -16,10 +16,16 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystemLegacy from 'expo-file-system/legacy';
 import { extractStudyMaterial, generateFlashcards } from '../services/llm';
 import { fetchVideosForTopics } from '../services/youtube';
 import { saveNoteToFirestore, fetchSubjectFolders, createSubjectFolder } from '../services/storage';
 import { SavedNote, SubjectFolder } from '../types';
+
+const FS_CAPTURES_DIR =
+    Platform.OS !== 'web' && FileSystemLegacy?.documentDirectory
+        ? `${FileSystemLegacy.documentDirectory}captured_photos/`
+        : null;
 
 interface CapturedImage {
     id: string;
@@ -90,22 +96,35 @@ export const CaptureScreen: React.FC<CaptureScreenProps> = ({
 
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                quality: 0.55,
+                quality: 0.65,
                 base64: true,
             });
 
-            if (!result.canceled && result.assets?.[0]?.base64) {
-                const newImg: CapturedImage = {
-                    id: `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                    uri: result.assets[0].uri,
-                    base64: result.assets[0].base64,
-                };
-                setImages((prev) => {
-                    const updated = [...prev, newImg];
-                    setActivePreviewIndex(updated.length - 1);
-                    return updated;
-                });
-                setErrorMsg(null);
+            if (!result.canceled && result.assets?.[0]) {
+                const asset = result.assets[0];
+                let b64 = asset.base64;
+                if (!b64 && Platform.OS !== 'web' && FileSystemLegacy) {
+                    try {
+                        b64 = await FileSystemLegacy.readAsStringAsync(asset.uri, {
+                            encoding: FileSystemLegacy.EncodingType.Base64,
+                        });
+                    } catch (readErr) {
+                        console.warn('Fallback base64 read failed:', readErr);
+                    }
+                }
+                if (b64) {
+                    const newImg: CapturedImage = {
+                        id: `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                        uri: asset.uri,
+                        base64: b64,
+                    };
+                    setImages((prev) => {
+                        const updated = [...prev, newImg];
+                        setActivePreviewIndex(updated.length - 1);
+                        return updated;
+                    });
+                    setErrorMsg(null);
+                }
             }
         } catch (err: any) {
             Alert.alert('Error', err.message || 'Failed to capture photo');
@@ -123,25 +142,41 @@ export const CaptureScreen: React.FC<CaptureScreenProps> = ({
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ImagePicker.MediaTypeOptions.Images,
                 allowsMultipleSelection: true,
-                quality: 0.55,
+                quality: 0.65,
                 base64: true,
             });
 
             if (!result.canceled && result.assets && result.assets.length > 0) {
-                const newImgs: CapturedImage[] = result.assets
-                    .filter((a) => a.base64)
-                    .map((a, idx) => ({
-                        id: `${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
-                        uri: a.uri,
-                        base64: a.base64!,
-                    }));
+                const newImgs: CapturedImage[] = [];
+                for (let idx = 0; idx < result.assets.length; idx++) {
+                    const a = result.assets[idx];
+                    let b64 = a.base64;
+                    if (!b64 && Platform.OS !== 'web' && FileSystemLegacy) {
+                        try {
+                            b64 = await FileSystemLegacy.readAsStringAsync(a.uri, {
+                                encoding: FileSystemLegacy.EncodingType.Base64,
+                            });
+                        } catch (readErr) {
+                            console.warn('Fallback gallery base64 read failed:', readErr);
+                        }
+                    }
+                    if (b64) {
+                        newImgs.push({
+                            id: `${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+                            uri: a.uri,
+                            base64: b64,
+                        });
+                    }
+                }
 
-                setImages((prev) => {
-                    const updated = [...prev, ...newImgs];
-                    setActivePreviewIndex(updated.length - 1);
-                    return updated;
-                });
-                setErrorMsg(null);
+                if (newImgs.length > 0) {
+                    setImages((prev) => {
+                        const updated = [...prev, ...newImgs];
+                        setActivePreviewIndex(updated.length - 1);
+                        return updated;
+                    });
+                    setErrorMsg(null);
+                }
             }
         } catch (err: any) {
             Alert.alert('Error', err.message || 'Failed to pick photos');
@@ -205,13 +240,46 @@ export const CaptureScreen: React.FC<CaptureScreenProps> = ({
 
             // Stage 4: Save
             setStage('saving');
-            const imageUris = images.map((img) => img.uri);
+
+            // Save whiteboard photos to permanent document sandbox so they never disappear
+            const permanentUris: string[] = [];
+            if (FS_CAPTURES_DIR) {
+                try {
+                    const dirInfo = await FileSystemLegacy.getInfoAsync(FS_CAPTURES_DIR);
+                    if (!dirInfo.exists) {
+                        await FileSystemLegacy.makeDirectoryAsync(FS_CAPTURES_DIR, { intermediates: true });
+                    }
+                } catch (dirErr) {
+                    console.warn('Directory check error:', dirErr);
+                }
+            }
+
+            for (let i = 0; i < images.length; i++) {
+                const img = images[i];
+                let finalUri = img.uri;
+                if (FS_CAPTURES_DIR && img.base64) {
+                    try {
+                        const destPath = `${FS_CAPTURES_DIR}photo_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}.jpg`;
+                        await FileSystemLegacy.writeAsStringAsync(destPath, img.base64, {
+                            encoding: FileSystemLegacy.EncodingType.Base64,
+                        });
+                        finalUri = destPath;
+                    } catch (saveErr) {
+                        console.warn('Permanent photo write error, using base64 data URI:', saveErr);
+                        finalUri = `data:image/jpeg;base64,${img.base64}`;
+                    }
+                } else if (img.base64) {
+                    finalUri = `data:image/jpeg;base64,${img.base64}`;
+                }
+                permanentUris.push(finalUri);
+            }
+
             const savedNote = await saveNoteToFirestore(
                 extraction,
                 combinedFlashcards,
                 combinedVideos,
                 appendNote?.id,
-                imageUris,
+                permanentUris,
                 selectedFolder?.id
             );
 

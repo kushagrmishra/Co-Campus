@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
 import { SavedNote, SubjectFolder } from '../types';
 import { generateMCQs, MCQQuestion } from '../services/llm';
-import { subjectsMatch } from '../services/storage';
+import { subjectsMatch, recordStudyActivity, getStudyStats, StudyStats } from '../services/storage';
 import {
     speakWithVoice,
     stopVoicePlayback,
@@ -405,6 +405,18 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
     // Subject selection
     const [selectedSubject, setSelectedSubject] = useState<string>(initialSubject || 'All');
 
+    // Real-Time Study Activity & Retention Stats
+    const [studyStats, setStudyStats] = useState<StudyStats>({
+        streakDays: 1,
+        retentionPct: 85,
+        totalReviewed: 0,
+        hasRealActivity: false,
+    });
+
+    useEffect(() => {
+        getStudyStats().then(setStudyStats).catch(console.warn);
+    }, []);
+
     // Flashcard State
     const [cardIndex, setCardIndex] = useState<number>(0);
     const [isFlipped, setIsFlipped] = useState<boolean>(false);
@@ -636,7 +648,18 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
         }
     };
 
-    const handleRating = (_rating: string) => {
+    const handleRating = async (rating: string) => {
+        const currentCard = cardsForSubject[safeCardIndex];
+        try {
+            await recordStudyActivity('card_rated', {
+                cardId: currentCard?.id,
+                rating,
+            });
+            const freshStats = await getStudyStats();
+            setStudyStats(freshStats);
+        } catch (e) {
+            console.warn('Record card rating error:', e);
+        }
         handleNextCard();
     };
 
@@ -671,6 +694,14 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
             setSelectedOption(null);
         } else {
             setQuizFinished(true);
+            try {
+                recordStudyActivity('quiz_completed', {
+                    score: quizScore + (selectedOption === currentMCQ?.correctIndex ? 1 : 0),
+                    total: mcqQuestions.length,
+                }).then(() => getStudyStats().then(setStudyStats));
+            } catch (e) {
+                console.warn('Record quiz activity error:', e);
+            }
         }
     };
 
@@ -752,6 +783,15 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
         Speech.stop();
         setIsFocusedSpeaking(false);
         setSessionStats((prev) => ({ ...prev, [rating]: prev[rating] + 1 }));
+
+        try {
+            recordStudyActivity('card_rated', {
+                cardId: focusedCards[focusedCardIndex]?.id,
+                rating,
+            }).then(() => getStudyStats().then(setStudyStats)).catch(console.warn);
+        } catch (e) {
+            console.warn('Record focused card rating error:', e);
+        }
 
         setRemainingCount((prevRemaining) => {
             const nextRemaining = Math.max(0, prevRemaining - 1);
@@ -1329,7 +1369,9 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                     </View>
                                     <View style={styles.fireBadge}>
                                         <Ionicons name="flame" size={15} color="#8a5300" />
-                                        <Text style={styles.fireText}>5 Days Active</Text>
+                                        <Text style={styles.fireText}>
+                                            {studyStats.streakDays} Day{studyStats.streakDays === 1 ? '' : 's'} Active
+                                        </Text>
                                     </View>
                                 </View>
 
@@ -1572,6 +1614,53 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                 <View style={styles.readerRoot}>
                                     {/* Reader Search & Controls Bar */}
                                     <View style={styles.readerControlsCard}>
+                                        {/* Top Quick Navigation: 1-Tap Card View, Quiz, and Options */}
+                                        <View style={styles.readerTopNavRow}>
+                                            <TouchableOpacity
+                                                style={styles.readerExitToCardBtn}
+                                                onPress={() => {
+                                                    setIsReaderMode(false);
+                                                    setActiveStudyMode('spaced');
+                                                }}
+                                                activeOpacity={0.85}
+                                            >
+                                                <Ionicons name="layers-outline" size={14} color="#ffffff" style={{ marginRight: 6 }} />
+                                                <Text style={styles.readerExitToCardText}>Card View</Text>
+                                            </TouchableOpacity>
+
+                                            <ScrollView
+                                                horizontal
+                                                showsHorizontalScrollIndicator={false}
+                                                contentContainerStyle={styles.readerTopChipsScroll}
+                                            >
+                                                <View style={styles.readerActiveModePill}>
+                                                    <Ionicons name="book" size={13} color="#182232" style={{ marginRight: 4 }} />
+                                                    <Text style={styles.readerActiveModePillText}>Reader Mode</Text>
+                                                </View>
+
+                                                <TouchableOpacity
+                                                    style={styles.readerModeChip}
+                                                    onPress={() => {
+                                                        setIsReaderMode(false);
+                                                        setViewMode('quiz');
+                                                    }}
+                                                    activeOpacity={0.85}
+                                                >
+                                                    <Ionicons name="help-circle-outline" size={14} color="#182232" style={{ marginRight: 4 }} />
+                                                    <Text style={styles.readerModeChipText}>Quiz</Text>
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity
+                                                    style={styles.readerModeChip}
+                                                    onPress={startDailyFocusedReview}
+                                                    activeOpacity={0.85}
+                                                >
+                                                    <Ionicons name="flash-outline" size={14} color="#8a5300" style={{ marginRight: 4 }} />
+                                                    <Text style={styles.readerModeChipText}>Drill</Text>
+                                                </TouchableOpacity>
+                                            </ScrollView>
+                                        </View>
+
                                         <View style={styles.readerSearchRow}>
                                             <Ionicons name="search-outline" size={16} color="#75777d" style={{ marginRight: 8 }} />
                                             <TextInput
@@ -1831,13 +1920,21 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                             n.subjectSlug.toLowerCase() === folder.id.toLowerCase() ||
                                             n.subject.toLowerCase() === folder.name.toLowerCase()
                                     );
-                                    const cardCount = Math.max(
-                                        10,
-                                        folderNotes.reduce((sum, n) => sum + (n.flashcards?.length || 0), 0)
+                                    const cardCount = folderNotes.reduce(
+                                        (sum, n) => sum + (n.flashcards?.length || 0),
+                                        0
                                     );
+                                    const noteCount = folderNotes.length;
                                     const isCurrent = selectedSubject === folder.name;
                                     const dotColors = ['#4b6456', '#d0916f', '#3b82f6', '#8b5cf6'];
                                     const dotColor = dotColors[idx % dotColors.length];
+
+                                    const progressPct =
+                                        cardCount > 0
+                                            ? isCurrent
+                                                ? Math.min(100, Math.round(((safeCardIndex + 1) / cardCount) * 100))
+                                                : Math.min(100, Math.round((Math.min(studyStats.totalReviewed, cardCount) / cardCount) * 100))
+                                            : 0;
 
                                     return (
                                         <TouchableOpacity
@@ -1867,14 +1964,14 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                                                 </View>
                                             </View>
                                             <Text style={styles.deckMeta}>
-                                                {folder.name} • {cardCount} cards • {folderNotes.length || 1} note linked
+                                                {folder.name} • {cardCount} {cardCount === 1 ? 'card' : 'cards'} • {noteCount} {noteCount === 1 ? 'note' : 'notes'} linked
                                             </Text>
                                             <View style={styles.progressBarBg}>
                                                 <View
                                                     style={[
                                                         styles.progressBarFill,
                                                         {
-                                                            width: `${Math.min(100, 40 + idx * 25)}%`,
+                                                            width: `${progressPct}%`,
                                                             backgroundColor: dotColor,
                                                         },
                                                     ]}
@@ -4045,6 +4142,66 @@ const styles = StyleSheet.create({
         borderColor: '#e2e8f0',
         padding: 14,
         marginBottom: 16,
+    },
+    readerTopNavRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 12,
+        paddingBottom: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f1f5f9',
+    },
+    readerExitToCardBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#182232',
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        borderRadius: 20,
+        shadowColor: '#182232',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.15,
+        shadowRadius: 2,
+        elevation: 2,
+    },
+    readerExitToCardText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#ffffff',
+    },
+    readerTopChipsScroll: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    readerActiveModePill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#e2e8f0',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 16,
+    },
+    readerActiveModePillText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#182232',
+    },
+    readerModeChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#f8fafc',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    readerModeChipText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#182232',
     },
     readerSearchRow: {
         flexDirection: 'row',

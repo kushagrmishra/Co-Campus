@@ -29,6 +29,9 @@ import {
     deleteSubjectFolder,
     updateFolderExam,
     forceRefreshStorage,
+    getStudyStats,
+    StudyStats,
+    subjectsMatch,
     AUTOMATA_NOTE,
 } from '../services/storage';
 import { extractExamFromSyllabus, ExtractedExamInfo } from '../services/llm';
@@ -93,6 +96,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const [notes, setNotes] = useState<SavedNote[]>([]);
     const [allRecentNotes, setAllRecentNotes] = useState<SavedNote[]>([]);
     const [refreshing, setRefreshing] = useState<boolean>(false);
+    const [studyStats, setStudyStats] = useState<StudyStats>({
+        streakDays: 1,
+        retentionPct: 85,
+        totalReviewed: 0,
+        hasRealActivity: false,
+    });
 
     // Current Term / Year
     const [currentTerm, setCurrentTerm] = useState<string>('Fall 2025');
@@ -173,6 +182,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 const sorted = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
                 setAllRecentNotes(sorted);
             }
+
+            // Load real-time study stats
+            const stats = await getStudyStats();
+            setStudyStats(stats);
         } catch (err) {
             console.error('Error fetching data:', err);
         } finally {
@@ -502,11 +515,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         </View>
                         <View style={styles.streakTextWrap}>
                             <View style={styles.streakTitleRow}>
-                                <Text style={styles.streakTitle}>5-Day Calm Streak</Text>
-                                <Text style={styles.retentionText}>• 84% Memory Retention</Text>
+                                <Text style={styles.streakTitle}>{studyStats.streakDays}-Day Calm Streak</Text>
+                                <Text style={styles.retentionText}>• {studyStats.retentionPct}% Memory Retention</Text>
                             </View>
                             <Text style={styles.streakDesc}>
-                                Review 10 flashcards today to solidify Automata and Discrete concepts gently.
+                                {studyStats.totalReviewed > 0
+                                    ? `${studyStats.totalReviewed} card${studyStats.totalReviewed === 1 ? '' : 's'} reviewed with active recall. Review daily to keep retention high.`
+                                    : 'Review cards daily to build memory retention and keep your calm streak active.'}
                             </Text>
                         </View>
                     </View>
@@ -571,6 +586,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         filteredFolders.length > 0 ? (
                             filteredFolders.map((folder, index) => {
                             const fallbackPreset = DEFAULT_SUBJECTS[index % DEFAULT_SUBJECTS.length];
+                            const folderNotes = allRecentNotes.filter(
+                                (n) =>
+                                    n.subjectSlug === folder.id ||
+                                    subjectsMatch(n.subjectSlug, folder.id) ||
+                                    subjectsMatch(n.subject, folder.name)
+                            );
+                            const realCardCount = folderNotes.reduce(
+                                (acc, n) => acc + (n.flashcards?.length || 0),
+                                0
+                            );
+                            const realNoteCount =
+                                folderNotes.length > 0 ? folderNotes.length : (folder.noteCount || 0);
+
                             return (
                                 <TouchableOpacity
                                     key={folder.id}
@@ -622,13 +650,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                                             <View style={styles.statItemRow}>
                                                 <Ionicons name="document-text-outline" size={13} color="#75777d" />
                                                 <Text style={styles.folderStatItem}>
-                                                    {folder.noteCount} notes
+                                                    {realNoteCount} {realNoteCount === 1 ? 'note' : 'notes'}
                                                 </Text>
                                             </View>
                                             <View style={styles.statItemRow}>
                                                 <Ionicons name="card-outline" size={13} color="#75777d" />
                                                 <Text style={styles.folderStatItem}>
-                                                    {(folder.noteCount || 1) * 8} cards
+                                                    {realCardCount} {realCardCount === 1 ? 'card' : 'cards'}
                                                 </Text>
                                             </View>
                                         </View>

@@ -531,6 +531,12 @@ async function saveNoteLocally(noteData: SavedNote): Promise<void> {
                 // ignore
             }
         }
+
+        // 5. Record study activity for real-time streaks & stats
+        await recordStudyActivity('note_created', {
+            noteId: noteData.id,
+            subject: noteData.subject,
+        });
     } catch (e) {
         console.error('Failed to save note locally:', e);
     }
@@ -1010,5 +1016,162 @@ export async function forceRefreshStorage(): Promise<{ notes: SavedNote[]; folde
     } catch (e) {
         console.error('Failed to force refresh storage:', e);
         return { notes: INITIAL_SEED_NOTES, folders: DEFAULT_FOLDERS };
+    }
+}
+
+// ── Real-Time Study Activity & Statistics Tracker ────────────────────────────
+const STORAGE_KEY_STUDY_ACTIVITY = '@cocampus_study_activity';
+
+export interface StudyActivityRecord {
+    activeDates: string[];
+    totalReviews: number;
+    goodOrEasyCount: number;
+    totalQuizQuestions: number;
+    totalQuizCorrect: number;
+}
+
+export interface StudyStats {
+    streakDays: number;
+    retentionPct: number;
+    totalReviewed: number;
+    hasRealActivity: boolean;
+}
+
+function getTodayDateString(): string {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+export async function recordStudyActivity(
+    type: 'note_created' | 'card_rated' | 'quiz_completed',
+    payload?: {
+        rating?: string;
+        score?: number;
+        total?: number;
+        noteId?: string;
+        cardId?: string;
+        subject?: string;
+    }
+): Promise<void> {
+    try {
+        const json = await AsyncStorage.getItem(STORAGE_KEY_STUDY_ACTIVITY);
+        let record: StudyActivityRecord = json
+            ? JSON.parse(json)
+            : {
+                  activeDates: [],
+                  totalReviews: 0,
+                  goodOrEasyCount: 0,
+                  totalQuizQuestions: 0,
+                  totalQuizCorrect: 0,
+              };
+
+        const today = getTodayDateString();
+        if (!record.activeDates.includes(today)) {
+            record.activeDates.push(today);
+            record.activeDates.sort();
+        }
+
+        if (type === 'card_rated') {
+            record.totalReviews += 1;
+            if (payload?.rating === 'good' || payload?.rating === 'easy') {
+                record.goodOrEasyCount += 1;
+            }
+        } else if (type === 'quiz_completed') {
+            record.totalQuizQuestions += payload?.total || 0;
+            record.totalQuizCorrect += payload?.score || 0;
+        }
+
+        await AsyncStorage.setItem(STORAGE_KEY_STUDY_ACTIVITY, JSON.stringify(record));
+    } catch (e) {
+        console.warn('Failed to record study activity:', e);
+    }
+}
+
+export async function getStudyStats(): Promise<{
+    streakDays: number;
+    retentionPct: number;
+    totalReviewed: number;
+    hasRealActivity: boolean;
+}> {
+    try {
+        const json = await AsyncStorage.getItem(STORAGE_KEY_STUDY_ACTIVITY);
+        const record: StudyActivityRecord = json
+            ? JSON.parse(json)
+            : {
+                  activeDates: [],
+                  totalReviews: 0,
+                  goodOrEasyCount: 0,
+                  totalQuizQuestions: 0,
+                  totalQuizCorrect: 0,
+              };
+
+        const activeDatesSet = new Set(record.activeDates);
+
+        // Calculate consecutive streak backwards from today or yesterday
+        let streak = 0;
+        let checkDate = new Date();
+        const checkStr = getTodayDateString();
+
+        if (activeDatesSet.has(checkStr)) {
+            streak++;
+            while (true) {
+                checkDate.setDate(checkDate.getDate() - 1);
+                const prevStr = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, '0')}-${String(checkDate.getDate()).padStart(2, '0')}`;
+                if (activeDatesSet.has(prevStr)) {
+                    streak++;
+                } else {
+                    break;
+                }
+            }
+        } else {
+            // Check if yesterday was active (streak still alive)
+            checkDate.setDate(checkDate.getDate() - 1);
+            const yesterdayStr = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, '0')}-${String(checkDate.getDate()).padStart(2, '0')}`;
+            if (activeDatesSet.has(yesterdayStr)) {
+                streak++;
+                while (true) {
+                    checkDate.setDate(checkDate.getDate() - 1);
+                    const prevStr = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, '0')}-${String(checkDate.getDate()).padStart(2, '0')}`;
+                    if (activeDatesSet.has(prevStr)) {
+                        streak++;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // If user has local notes, minimum real streak is at least 1 day
+        const localNotes = await getLocalNotes();
+        if (localNotes.length > 0 && streak === 0) {
+            streak = 1;
+        }
+
+        // Retention calculation
+        const totalAnswers = record.totalReviews + record.totalQuizQuestions;
+        const totalCorrect = record.goodOrEasyCount + record.totalQuizCorrect;
+        let retentionPct = 0;
+        if (totalAnswers > 0) {
+            retentionPct = Math.round((totalCorrect / totalAnswers) * 100);
+        } else {
+            retentionPct = 0;
+        }
+
+        return {
+            streakDays: streak,
+            retentionPct,
+            totalReviewed: totalAnswers,
+            hasRealActivity: totalAnswers > 0 || record.activeDates.length > 0,
+        };
+    } catch {
+        return {
+            streakDays: 1,
+            retentionPct: 0,
+            totalReviewed: 0,
+            hasRealActivity: false,
+        };
     }
 }
