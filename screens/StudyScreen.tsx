@@ -17,6 +17,13 @@ import * as Speech from 'expo-speech';
 import { SavedNote, SubjectFolder } from '../types';
 import { generateMCQs, MCQQuestion } from '../services/llm';
 import { subjectsMatch } from '../services/storage';
+import {
+    speakWithVoice,
+    stopVoicePlayback,
+    getVoiceSettings,
+    VOICE_PERSONAS,
+} from '../services/voice';
+import { VoiceSettingsModal } from '../components/VoiceSettingsModal';
 
 interface StudyScreenProps {
     notes?: SavedNote[];
@@ -442,10 +449,21 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
     const [customCorrectIndex, setCustomCorrectIndex] = useState<number>(0);
     const [customExplanation, setCustomExplanation] = useState<string>('');
 
+    // AI Voice Persona Customization State
+    const [showVoiceModal, setShowVoiceModal] = useState<boolean>(false);
+    const [currentVoiceName, setCurrentVoiceName] = useState<string>('Breeze');
+
+    useEffect(() => {
+        getVoiceSettings().then((s) => {
+            const matched = VOICE_PERSONAS.find((p) => p.id === s.personaId);
+            if (matched) setCurrentVoiceName(matched.name);
+        });
+    }, []);
+
     // Stop speech synthesis if unmounting
     useEffect(() => {
         return () => {
-            Speech.stop();
+            stopVoicePlayback();
         };
     }, []);
 
@@ -622,13 +640,11 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
 
     const handleReadAudio = async (text: string) => {
         if (isSpeaking) {
-            await Speech.stop();
+            await stopVoicePlayback();
             setIsSpeaking(false);
         } else {
             setIsSpeaking(true);
-            Speech.speak(text, {
-                rate: 0.95,
-                pitch: 1.0,
+            speakWithVoice(text, {
                 onDone: () => setIsSpeaking(false),
                 onStopped: () => setIsSpeaking(false),
                 onError: () => setIsSpeaking(false),
@@ -753,13 +769,11 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
 
     const handleFocusedAudio = async (text: string) => {
         if (isFocusedSpeaking) {
-            await Speech.stop();
+            await stopVoicePlayback();
             setIsFocusedSpeaking(false);
         } else {
             setIsFocusedSpeaking(true);
-            Speech.speak(text, {
-                rate: 0.95,
-                pitch: 1.0,
+            speakWithVoice(text, {
                 onDone: () => setIsFocusedSpeaking(false),
                 onStopped: () => setIsFocusedSpeaking(false),
                 onError: () => setIsFocusedSpeaking(false),
@@ -799,9 +813,7 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
             const card = cardList[index];
             setReaderActiveCardId(card.id);
             const textToSpeak = `Card ${index + 1}. Question: ${card.question}. Target Answer: ${card.answer}`;
-            Speech.speak(textToSpeak, {
-                rate: 0.95,
-                pitch: 1.0,
+            speakWithVoice(textToSpeak, {
                 onDone: () => {
                     setTimeout(() => {
                         playReaderCardSequence(index + 1, cardList);
@@ -1197,6 +1209,14 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                         </View>
                     </View>
                     <View style={styles.headerRight}>
+                        <TouchableOpacity
+                            style={styles.voiceHeaderPill}
+                            onPress={() => setShowVoiceModal(true)}
+                            activeOpacity={0.85}
+                        >
+                            <Ionicons name="sparkles" size={12} color="#1b4d3e" style={{ marginRight: 4 }} />
+                            <Text style={styles.voiceHeaderPillText}>Voice: {currentVoiceName}</Text>
+                        </TouchableOpacity>
                         <View style={styles.avatarCircle}>
                             <Text style={styles.avatarInitial}>K</Text>
                         </View>
@@ -2327,6 +2347,16 @@ export const StudyScreen: React.FC<StudyScreenProps> = ({
                     </View>
                 </View>
             </Modal>
+
+            {/* AI Voice Customization Modal (ChatGPT-like persona settings) */}
+            <VoiceSettingsModal
+                visible={showVoiceModal}
+                onClose={() => setShowVoiceModal(false)}
+                onVoiceChanged={(newSettings) => {
+                    const matched = VOICE_PERSONAS.find((p) => p.id === newSettings.personaId);
+                    if (matched) setCurrentVoiceName(matched.name);
+                }}
+            />
         </View>
     );
 };
@@ -2378,6 +2408,22 @@ const styles = StyleSheet.create({
     headerRight: {
         flexDirection: 'row',
         alignItems: 'center',
+        gap: 8,
+    },
+    voiceHeaderPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#e8f5ed',
+        borderWidth: 1,
+        borderColor: '#cde9d8',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 14,
+    },
+    voiceHeaderPillText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1b4d3e',
     },
     avatarCircle: {
         width: 32,

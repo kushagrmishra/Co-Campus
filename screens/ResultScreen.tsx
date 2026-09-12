@@ -18,10 +18,17 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
-import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync } from 'expo-audio';
+import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { SavedNote, YouTubeVideo } from '../types';
 import { getCuratedClipsForSubject } from '../services/youtube';
 import { askNoteAiDirectly, transcribeAudio } from '../services/llm';
+import {
+    speakWithVoice,
+    stopVoicePlayback,
+    getVoiceSettings,
+    VOICE_PERSONAS,
+} from '../services/voice';
+import { VoiceSettingsModal } from '../components/VoiceSettingsModal';
 
 interface ResultsScreenProps {
     note: SavedNote;
@@ -52,6 +59,16 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     const [isListening, setIsListening] = useState<boolean>(false);
     const [isPlayingAnswerVoice, setIsPlayingAnswerVoice] = useState<boolean>(false);
     const [listeningStatus, setListeningStatus] = useState<string>('Listening for voice...');
+    const [showVoiceModal, setShowVoiceModal] = useState<boolean>(false);
+    const [currentVoiceName, setCurrentVoiceName] = useState<string>('Breeze');
+
+    // Load active voice persona
+    useEffect(() => {
+        getVoiceSettings().then((s) => {
+            const matched = VOICE_PERSONAS.find((p) => p.id === s.personaId);
+            if (matched) setCurrentVoiceName(matched.name);
+        });
+    }, []);
 
     // Waveform & Pulse Animations
     const micPulseAnim = useRef(new Animated.Value(1)).current;
@@ -63,6 +80,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     const aiSectionYRef = useRef<number>(0);
     const recognitionRef = useRef<any>(null);
     const isListeningRef = useRef<boolean>(false);
+    const latestTranscriptRef = useRef<string>('');
     const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
     // Mic Pulsing and Waveform loop
@@ -128,17 +146,37 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         }
     }, [isListening, micPulseAnim, waveAnim1, waveAnim2, waveAnim3, waveAnim4]);
 
+    // Pre-initialize audio mode for seamless recording & playback
+    useEffect(() => {
+        if (Platform.OS !== 'web') {
+            setAudioModeAsync({
+                allowsRecording: true,
+                playsInSilentMode: true,
+                interruptionMode: 'mixWithOthers',
+                shouldPlayInBackground: false,
+                shouldRouteThroughEarpiece: false,
+            }).catch((err) => {
+                console.warn('Could not pre-set audio mode on ResultScreen mount:', err);
+            });
+        }
+    }, []);
+
     // Stop speech and mic on unmount
     useEffect(() => {
         return () => {
-            Speech.stop();
+            stopVoicePlayback();
             if (recognitionRef.current) {
                 try {
                     recognitionRef.current.stop();
                 } catch {}
             }
+            try {
+                if (recorder.isRecording) {
+                    recorder.stop();
+                }
+            } catch {}
         };
-    }, []);
+    }, [recorder]);
 
     // Guaranteed video clips: uses note's videos, or automatically resolves high-yield academic clips
     const curatedClips = useMemo<YouTubeVideo[]>(() => {
@@ -212,16 +250,25 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         isListeningRef.current = false;
         setIsListening(false);
 
-        // Web Speech Recognition
+        // 1. Web Speech Recognition
         if (recognitionRef.current) {
             try {
                 recognitionRef.current.stop();
             } catch {}
             recognitionRef.current = null;
+            const textToAsk = (latestTranscriptRef.current || questionInput).trim();
+            latestTranscriptRef.current = '';
+            if (textToAsk) {
+                setListeningStatus(`Heard: "${textToAsk}"`);
+                handleAskAi(textToAsk);
+            } else {
+                setListeningStatus('No speech recognized. Tap mic to speak.');
+                setTimeout(() => setListeningStatus(''), 3000);
+            }
             return;
         }
 
-        // Native Audio Recorder -> Groq Whisper transcription
+        // 2. Native Audio Recorder -> Groq Whisper transcription
         try {
             setListeningStatus('Transcribing your speech with AI...');
             await recorder.stop();
@@ -244,7 +291,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             setListeningStatus('Transcription unavailable. You can type your question.');
             setTimeout(() => setListeningStatus(''), 3500);
         }
-    }, [recorder, handleAskAi]);
+    }, [recorder, handleAskAi, questionInput]);
 
     const handleToggleMic = useCallback(async () => {
         if (isListeningRef.current) {
@@ -252,10 +299,56 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             return;
         }
 
+        // Silence any ongoing speech playback before listening
+        stopVoicePlayback();
+        try {
+            await Speech.stop();
+        } catch {}
+        setIsPlayingAudio(false);
+        setIsPlayingAnswerVoice(false);
+
         // Scroll to AI Copilot card
         if (scrollViewRef.current && aiSectionYRef.current > 0) {
             scrollViewRef.current.scrollTo({ y: Math.max(0, aiSectionYRef.current - 20), animated: true });
         }
+
+        // Helper to launch Expo Audio recorder (used on Native or as Web fallback)
+        const startExpoRecorder = async () => {
+            try {
+                const perm = await requestRecordingPermissionsAsync();
+                if (!perm.granted) {
+                    setListeningStatus('Microphone permission required.');
+                    Alert.alert(
+                        'Microphone Permission Needed',
+                        'Please allow microphone access in your device settings to speak your study questions.'
+                    );
+                    return;
+                }
+
+                if (Platform.OS !== 'web') {
+                    await setAudioModeAsync({
+                        allowsRecording: true,
+                        playsInSilentMode: true,
+                        interruptionMode: 'mixWithOthers',
+                        shouldPlayInBackground: false,
+                        shouldRouteThroughEarpiece: false,
+                    });
+                }
+
+                isListeningRef.current = true;
+                setIsListening(true);
+                setListeningStatus('Listening... Speak now (tap mic when done)');
+
+                await recorder.prepareToRecordAsync();
+                recorder.record();
+            } catch (recErr: any) {
+                console.warn('Audio recording failed to start:', recErr);
+                isListeningRef.current = false;
+                setIsListening(false);
+                setListeningStatus('Could not access microphone. Please type your question.');
+                setTimeout(() => setListeningStatus(''), 3500);
+            }
+        };
 
         // 1. Check Web Speech API support first for browser
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -263,37 +356,40 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             if (SpeechRec) {
                 try {
                     const rec = new SpeechRec();
-                    rec.continuous = false;
+                    rec.continuous = true;
                     rec.interimResults = true;
                     rec.lang = 'en-US';
+                    latestTranscriptRef.current = '';
 
                     rec.onstart = () => {
                         isListeningRef.current = true;
                         setIsListening(true);
-                        setListeningStatus('Listening... Speak your question now');
+                        setListeningStatus('Listening... Speak now (tap mic when done)');
                     };
 
                     rec.onresult = (evt: any) => {
-                        const transcript = Array.from(evt.results)
-                            .map((r: any) => r[0].transcript)
-                            .join('');
+                        let transcript = '';
+                        for (let i = 0; i < evt.results.length; i++) {
+                            transcript += evt.results[i][0].transcript;
+                        }
+                        latestTranscriptRef.current = transcript;
                         setQuestionInput(transcript);
                         setListeningStatus(`Heard: "${transcript}"`);
-                        if (evt.results[0]?.isFinal) {
-                            isListeningRef.current = false;
-                            setIsListening(false);
-                            handleAskAi(transcript);
-                        }
                     };
 
                     rec.onerror = (evt: any) => {
                         console.warn('Speech recognition error event:', evt?.error);
-                        isListeningRef.current = false;
-                        setIsListening(false);
+                        if (evt?.error === 'not-allowed' || evt?.error === 'network' || evt?.error === 'service-not-allowed') {
+                            // Fallback to Expo Audio MediaRecorder
+                            if (recognitionRef.current) {
+                                try { recognitionRef.current.stop(); } catch {}
+                                recognitionRef.current = null;
+                            }
+                            startExpoRecorder();
+                            return;
+                        }
                         if (evt?.error === 'no-speech') {
                             setListeningStatus('No speech heard. Tap mic to try again.');
-                        } else if (evt?.error === 'not-allowed') {
-                            setListeningStatus('Mic permission denied in browser.');
                         } else {
                             setListeningStatus('');
                         }
@@ -301,60 +397,42 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                     };
 
                     rec.onend = () => {
-                        isListeningRef.current = false;
-                        setIsListening(false);
+                        if (isListeningRef.current) {
+                            isListeningRef.current = false;
+                            setIsListening(false);
+                            const text = latestTranscriptRef.current.trim();
+                            latestTranscriptRef.current = '';
+                            if (text) {
+                                handleAskAi(text);
+                            }
+                        }
                     };
 
                     rec.start();
                     recognitionRef.current = rec;
                     return;
                 } catch (e) {
-                    console.warn('Speech recognition start failed:', e);
+                    console.warn('Speech recognition start failed, using Expo Audio:', e);
                 }
             }
         }
 
         // 2. Native Expo Audio recording
-        try {
-            const perm = await requestRecordingPermissionsAsync();
-            if (!perm.granted) {
-                setListeningStatus('Microphone permission required.');
-                Alert.alert(
-                    'Microphone Permission Needed',
-                    'Please allow microphone access in your device settings to speak your study questions.'
-                );
-                return;
-            }
-
-            isListeningRef.current = true;
-            setIsListening(true);
-            setListeningStatus('Listening... Speak now (Tap mic or "Done Speaking" when finished)');
-
-            await recorder.prepareToRecordAsync();
-            recorder.record();
-        } catch (recErr: any) {
-            console.warn('Audio recording failed to start:', recErr);
-            isListeningRef.current = false;
-            setIsListening(false);
-            setListeningStatus('Could not access microphone. Please type your question.');
-            setTimeout(() => setListeningStatus(''), 3500);
-        }
+        await startExpoRecorder();
     }, [handleStopMic, recorder, handleAskAi]);
 
     const handleToggleAnswerVoice = async () => {
         if (isPlayingAnswerVoice) {
-            await Speech.stop();
+            await stopVoicePlayback();
             setIsPlayingAnswerVoice(false);
         } else {
             if (!currentAiAnswer) return;
             if (isPlayingAudio) {
-                await Speech.stop();
+                await stopVoicePlayback();
                 setIsPlayingAudio(false);
             }
             setIsPlayingAnswerVoice(true);
-            Speech.speak(currentAiAnswer, {
-                rate: 0.95,
-                pitch: 1.0,
+            speakWithVoice(currentAiAnswer, {
                 onDone: () => setIsPlayingAnswerVoice(false),
                 onStopped: () => setIsPlayingAnswerVoice(false),
                 onError: () => setIsPlayingAnswerVoice(false),
@@ -364,20 +442,18 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
     const handleToggleAudio = async () => {
         if (isPlayingAudio) {
-            await Speech.stop();
+            await stopVoicePlayback();
             setIsPlayingAudio(false);
         } else {
             if (isPlayingAnswerVoice) {
-                await Speech.stop();
+                await stopVoicePlayback();
                 setIsPlayingAnswerVoice(false);
             }
             setIsPlayingAudio(true);
             const textToSpeak = `${note.title}. Summary: ${note.extraction.generatedNotes}. Key Topics: ${note.extraction.topics
                 .map((t) => t.heading)
                 .join('. ')}`;
-            Speech.speak(textToSpeak, {
-                rate: 0.95,
-                pitch: 1.0,
+            speakWithVoice(textToSpeak, {
                 onDone: () => setIsPlayingAudio(false),
                 onStopped: () => setIsPlayingAudio(false),
                 onError: () => setIsPlayingAudio(false),
@@ -387,11 +463,11 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
     const handleBack = async () => {
         if (isPlayingAudio) {
-            await Speech.stop();
+            await stopVoicePlayback();
             setIsPlayingAudio(false);
         }
         if (isPlayingAnswerVoice) {
-            await Speech.stop();
+            await stopVoicePlayback();
             setIsPlayingAnswerVoice(false);
         }
         if (isListening) {
@@ -499,6 +575,15 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                             >
                                 {isPlayingAudio ? 'Stop Audio' : 'Listen (Audio)'}
                             </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={styles.mediaPill}
+                            onPress={() => setShowVoiceModal(true)}
+                            activeOpacity={0.85}
+                        >
+                            <Ionicons name="sparkles-outline" size={14} color="#1b4d3e" />
+                            <Text style={styles.mediaPillText}>Voice: {currentVoiceName}</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -697,37 +782,49 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                                 <View style={styles.answerBody}>
                                     <Text style={styles.answerText}>{currentAiAnswer}</Text>
 
-                                    {/* Action Buttons: Voice Playback & Copy/Dismiss */}
+                                    {/* Action Buttons: Voice Playback, Persona Selector & Dismiss */}
                                     <View style={styles.answerActionsRow}>
-                                        <TouchableOpacity
-                                            style={[
-                                                styles.voiceAnswerBtn,
-                                                isPlayingAnswerVoice && styles.voiceAnswerBtnActive,
-                                            ]}
-                                            onPress={handleToggleAnswerVoice}
-                                            activeOpacity={0.85}
-                                        >
-                                            <Ionicons
-                                                name={isPlayingAnswerVoice ? 'stop-circle' : 'volume-high-outline'}
-                                                size={15}
-                                                color={isPlayingAnswerVoice ? '#ba1a1a' : '#1b4d3e'}
-                                                style={{ marginRight: 4 }}
-                                            />
-                                            <Text
+                                        <View style={styles.voiceAnswerLeftGroup}>
+                                            <TouchableOpacity
                                                 style={[
-                                                    styles.voiceAnswerBtnText,
-                                                    isPlayingAnswerVoice && styles.voiceAnswerBtnActiveText,
+                                                    styles.voiceAnswerBtn,
+                                                    isPlayingAnswerVoice && styles.voiceAnswerBtnActive,
                                                 ]}
+                                                onPress={handleToggleAnswerVoice}
+                                                activeOpacity={0.85}
                                             >
-                                                {isPlayingAnswerVoice ? 'Stop Voice' : 'Listen (Voice)'}
-                                            </Text>
-                                        </TouchableOpacity>
+                                                <Ionicons
+                                                    name={isPlayingAnswerVoice ? 'stop-circle' : 'volume-high-outline'}
+                                                    size={15}
+                                                    color={isPlayingAnswerVoice ? '#ba1a1a' : '#1b4d3e'}
+                                                    style={{ marginRight: 4 }}
+                                                />
+                                                <Text
+                                                    style={[
+                                                        styles.voiceAnswerBtnText,
+                                                        isPlayingAnswerVoice && styles.voiceAnswerBtnActiveText,
+                                                    ]}
+                                                >
+                                                    {isPlayingAnswerVoice ? 'Stop Voice' : 'Listen (Voice)'}
+                                                </Text>
+                                            </TouchableOpacity>
+
+                                            <TouchableOpacity
+                                                style={styles.voiceCustomizationBtn}
+                                                onPress={() => setShowVoiceModal(true)}
+                                                activeOpacity={0.85}
+                                            >
+                                                <Ionicons name="sparkles" size={12} color="#1b4d3e" style={{ marginRight: 4 }} />
+                                                <Text style={styles.voiceCustomizationBtnText}>{currentVoiceName}</Text>
+                                                <Ionicons name="chevron-down" size={11} color="#1b4d3e" style={{ marginLeft: 3 }} />
+                                            </TouchableOpacity>
+                                        </View>
 
                                         <TouchableOpacity
                                             style={styles.dismissAnswerBtn}
                                             onPress={() => {
                                                 if (isPlayingAnswerVoice) {
-                                                    Speech.stop();
+                                                    stopVoicePlayback();
                                                     setIsPlayingAnswerVoice(false);
                                                 }
                                                 setCurrentAiAnswer('');
@@ -996,6 +1093,16 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                     </View>
                 </View>
             </Modal>
+
+            {/* AI Voice Customization Modal (ChatGPT-like Persona Selector) */}
+            <VoiceSettingsModal
+                visible={showVoiceModal}
+                onClose={() => setShowVoiceModal(false)}
+                onVoiceChanged={(newSettings) => {
+                    const matched = VOICE_PERSONAS.find((p) => p.id === newSettings.personaId);
+                    if (matched) setCurrentVoiceName(matched.name);
+                }}
+            />
 
             {/* Single Modern Floating Mic Button (Translucent Frosted Glass) */}
             <TouchableOpacity
@@ -1973,6 +2080,26 @@ const styles = StyleSheet.create({
     },
     voiceAnswerBtnActiveText: {
         color: '#ba1a1a',
+    },
+    voiceAnswerLeftGroup: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    voiceCustomizationBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#e8f5ed',
+        borderWidth: 1,
+        borderColor: '#cde9d8',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 10,
+        marginLeft: 8,
+    },
+    voiceCustomizationBtnText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#1b4d3e',
     },
     dismissAnswerBtn: {
         paddingHorizontal: 8,

@@ -1,311 +1,286 @@
+import { Platform } from 'react-native';
+import * as FileSystemLegacy from 'expo-file-system/legacy';
 import { ExtractionData, Flashcard, SavedNote, Topic } from '../types';
 import { subjectsMatch } from './storage';
 
-const LLM_API_KEY = process.env.EXPO_PUBLIC_LLM_API_KEY;
-const LLM_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_TEXT_MODEL = 'openai/gpt-oss-20b';
-const GEMINI_MODEL = 'gemini-2.5-flash-lite';
+// ── API Configuration ────────────────────────────────────────────────────────
+const GROQ_KEY = process.env.EXPO_PUBLIC_LLM_API_KEY;
+const GEMINI_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+const OPENROUTER_KEY = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY;
 
-const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+const GEMINI_MODEL = 'gemini-3.5-flash-lite';
+const OPENROUTER_MODEL = 'google/gemini-3.5-flash-lite';
+const GROQ_MODEL = 'openai/gpt-oss-20b';
 
-const OPENROUTER_API_KEY = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY;
-const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_VISION_MODEL = 'google/gemini-3.5-flash-lite';
-const OPENROUTER_TEXT_MODEL = 'google/gemini-3.5-flash-lite';
+// ── Parsing & Sanitization ───────────────────────────────────────────────────
+function cleanJson(raw: string): string {
+    return raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+}
 
-/** OpenRouter vision call (OpenAI-compatible format) */
-async function callOpenRouterVision(
-    promptText: string,
-    base64Images: string[],
-    temperature: number = 0.2
-): Promise<string> {
-    if (!OPENROUTER_API_KEY) throw new Error('OpenRouter API key not configured.');
-
-    const content: any[] = [{ type: 'text', text: promptText }];
-    for (const img of base64Images) {
-        content.push({
-            type: 'image_url',
-            image_url: { url: `data:image/jpeg;base64,${img}` },
-        });
+function safeParse<T>(raw: string, fallback: T): T {
+    try {
+        return JSON.parse(cleanJson(raw));
+    } catch {
+        return fallback;
     }
+}
 
-    const response = await fetch(OPENROUTER_ENDPOINT, {
+// ── Core LLM Callers ─────────────────────────────────────────────────────────
+async function callOpenRouter(prompt: string, images: string[] = [], temperature = 0.2): Promise<string> {
+    if (!OPENROUTER_KEY) throw new Error('OpenRouter API key missing');
+    const content: any[] = [{ type: 'text', text: prompt }];
+    for (const img of images) {
+        content.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${img}` } });
+    }
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            Authorization: `Bearer ${OPENROUTER_KEY}`,
             'HTTP-Referer': 'https://cocampus.app',
             'X-Title': 'CoCampus',
         },
         body: JSON.stringify({
-            model: OPENROUTER_VISION_MODEL,
+            model: OPENROUTER_MODEL,
             temperature,
-            max_tokens: 4096,
-            messages: [{ role: 'user', content }],
+            max_tokens: 2048,
+            messages: [{ role: 'user', content: images.length ? content : prompt }],
         }),
     });
-
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`OpenRouter request failed (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
+    if (!res.ok) throw new Error(`OpenRouter failed (${res.status}): ${await res.text()}`);
+    const data = await res.json();
     return data.choices?.[0]?.message?.content || '';
 }
 
-/** OpenRouter text-only call */
-async function callOpenRouterText(
-    promptText: string,
-    temperature: number = 0.3
-): Promise<string> {
-    if (!OPENROUTER_API_KEY) throw new Error('OpenRouter API key not configured.');
-
-    const response = await fetch(OPENROUTER_ENDPOINT, {
+async function callGemini(prompt: string, images: string[] = [], json = false): Promise<string> {
+    if (!GEMINI_KEY) throw new Error('Gemini API key missing');
+    const parts: any[] = [{ text: prompt }];
+    for (const img of images) {
+        parts.push({ inlineData: { mimeType: 'image/jpeg', data: img } });
+    }
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-            'HTTP-Referer': 'https://cocampus.app',
-            'X-Title': 'CoCampus',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            model: OPENROUTER_TEXT_MODEL,
-            temperature,
-            max_tokens: 4096,
-            messages: [{ role: 'user', content: promptText }],
+            contents: [{ parts }],
+            generationConfig: {
+                temperature: 0.2,
+                maxOutputTokens: 2048,
+                ...(json ? { responseMimeType: 'application/json' } : {}),
+            },
         }),
     });
+    if (!res.ok) throw new Error(`Gemini failed (${res.status}): ${await res.text()}`);
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
 
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`OpenRouter text request failed (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
+async function callGroq(prompt: string, json = false): Promise<string> {
+    if (!GROQ_KEY) throw new Error('Groq API key missing');
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${GROQ_KEY}` },
+        body: JSON.stringify({
+            model: GROQ_MODEL,
+            temperature: 0.3,
+            max_tokens: 2048,
+            ...(json ? { response_format: { type: 'json_object' } } : {}),
+            messages: [{ role: 'user', content: prompt }],
+        }),
+    });
+    if (!res.ok) throw new Error(`Groq failed (${res.status}): ${await res.text()}`);
+    const data = await res.json();
     return data.choices?.[0]?.message?.content || '';
 }
 
-function sanitizeJsonResponse(rawText: string): string {
-    let cleaned = rawText.trim();
-    if (cleaned.startsWith('```json')) {
-        cleaned = cleaned.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    } else if (cleaned.startsWith('```')) {
-        cleaned = cleaned.replace(/^```\s*/, '').replace(/\s*```$/, '');
+/** Unified vision caller: tries OpenRouter, then Gemini fallback */
+async function callVision(prompt: string, images: string[]): Promise<string> {
+    if (OPENROUTER_KEY) {
+        try { return await callOpenRouter(prompt, images); } catch (e) { console.warn('OpenRouter vision failed:', e); }
     }
-    return cleaned;
-}
-
-const RESPONSE_CACHE_LIMIT = 50;
-const responseCache = new Map<string, string>();
-
-function cacheKey(scope: string, ...parts: string[]): string {
-    return `${scope}:${parts.join('|')}`;
-}
-
-function getCachedResponse(key: string): string | undefined {
-    const value = responseCache.get(key);
-    if (value !== undefined) {
-        responseCache.delete(key);
-        responseCache.set(key, value);
+    if (GEMINI_KEY) {
+        try { return await callGemini(prompt, images, true); } catch (e) { console.warn('Gemini vision failed:', e); }
     }
-    return value;
+    throw new Error('All vision LLM providers failed. Check your API keys.');
 }
 
-function setCachedResponse(key: string, value: string): void {
-    responseCache.delete(key);
-    responseCache.set(key, value);
-    while (responseCache.size > RESPONSE_CACHE_LIMIT) {
-        const oldestKey = responseCache.keys().next().value;
-        if (!oldestKey) break;
-        responseCache.delete(oldestKey);
+/** Unified text caller: cascades OpenRouter -> Gemini -> Groq */
+async function callText(prompt: string, json = false): Promise<string> {
+    if (OPENROUTER_KEY) {
+        try { const r = await callOpenRouter(prompt, [], 0.3); if (r) return r; } catch (e) { console.warn('OpenRouter text failed:', e); }
     }
-}
-
-function compactExtractionContext(extraction: ExtractionData, rawTextLimit: number | null = null): string {
-    const topics = extraction.topics
-        .map((topic) => `${topic.heading}: ${topic.bullets.join('; ')}`)
-        .join('\n');
-    const tasks = extraction.tasks
-        .map((task) => `${task.title} | due: ${task.dueDate || 'none'} | ${task.notes || 'no notes'}`)
-        .join('\n');
-
-    const context = [
-        `Subject: ${extraction.subject}`,
-        `Title: ${extraction.title}`,
-        `Summary: ${extraction.generatedNotes}`,
-        `Topics:\n${topics || 'none'}`,
-        `Tasks:\n${tasks || 'none'}`,
-    ];
-    if (rawTextLimit !== 0) {
-        context.push(`OCR:\n${rawTextLimit === null ? extraction.rawText : extraction.rawText.substring(0, rawTextLimit)}`);
+    if (GEMINI_KEY) {
+        try { const r = await callGemini(prompt, [], json); if (r) return r; } catch (e) { console.warn('Gemini text failed:', e); }
     }
-    return context.join('\n');
+    if (GROQ_KEY) {
+        try { const r = await callGroq(prompt, json); if (r) return r; } catch (e) { console.warn('Groq text failed:', e); }
+    }
+    return '';
 }
 
-function compactNoteContext(note: SavedNote): string {
-    const flashcards = (note.flashcards || [])
-        .map((card) => `Q: ${card.question}\nA: ${card.answer}`)
-        .join('\n');
-
-    return [
-        `Subject: ${note.subject}`,
-        `Title: ${note.title}`,
-        compactExtractionContext(note.extraction, 1000),
-        `Flashcards:\n${flashcards || 'none'}`,
-    ].join('\n');
+// ── Base64 Decode Helper ─────────────────────────────────────────────────────
+function base64ToUint8Array(base64: string): Uint8Array {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const lookup = new Uint8Array(256);
+    for (let i = 0; i < chars.length; i++) {
+        lookup[chars.charCodeAt(i)] = i;
+    }
+    const clean = base64.replace(/[^A-Za-z0-9+/]/g, '');
+    let bufferLength = clean.length * 0.75;
+    if (clean.endsWith('==')) bufferLength -= 2;
+    else if (clean.endsWith('=')) bufferLength -= 1;
+    const bytes = new Uint8Array(bufferLength);
+    let p = 0;
+    for (let i = 0; i < clean.length; i += 4) {
+        const enc1 = lookup[clean.charCodeAt(i)];
+        const enc2 = lookup[clean.charCodeAt(i + 1)];
+        const enc3 = lookup[clean.charCodeAt(i + 2)];
+        const enc4 = lookup[clean.charCodeAt(i + 3)];
+        bytes[p++] = (enc1 << 2) | (enc2 >> 4);
+        if (p < bufferLength) bytes[p++] = ((enc2 & 15) << 4) | (enc3 >> 2);
+        if (p < bufferLength) bytes[p++] = ((enc3 & 3) << 6) | (enc4 & 63);
+    }
+    return bytes;
 }
 
-/**
- * Transcribe an audio file using Groq Whisper API (whisper-large-v3-turbo).
- * Accepts a native local file URI or web Blob.
- */
+// ── Audio Transcription ──────────────────────────────────────────────────────
 export async function transcribeAudio(audioUriOrBlob: string | Blob): Promise<string> {
-    if (!LLM_API_KEY) {
-        throw new Error('LLM API key (Groq) is not configured for audio transcription.');
+    if (!GROQ_KEY) throw new Error('LLM API key (Groq) is not configured.');
+
+    // 1. Native platform with local file:// URI -> Use FileSystem native multipart upload
+    if (typeof audioUriOrBlob === 'string' && Platform.OS !== 'web' && !audioUriOrBlob.startsWith('blob:') && !audioUriOrBlob.startsWith('http')) {
+        try {
+            const uploadResult = await FileSystemLegacy.uploadAsync(
+                'https://api.groq.com/openai/v1/audio/transcriptions',
+                audioUriOrBlob,
+                {
+                    httpMethod: 'POST',
+                    uploadType: FileSystemLegacy.FileSystemUploadType.MULTIPART,
+                    fieldName: 'file',
+                    mimeType: 'audio/m4a',
+                    parameters: {
+                        model: 'whisper-large-v3-turbo',
+                        language: 'en',
+                    },
+                    headers: {
+                        Authorization: `Bearer ${GROQ_KEY}`,
+                    },
+                }
+            );
+            if (uploadResult.status >= 200 && uploadResult.status < 300) {
+                const data = JSON.parse(uploadResult.body);
+                return (data.text || '').trim();
+            }
+            console.warn(`Native uploadAsync status ${uploadResult.status}: ${uploadResult.body}`);
+        } catch (uploadErr) {
+            console.warn('Native FileSystem uploadAsync failed, attempting Base64 Blob fallback:', uploadErr);
+        }
+
+        // Fallback for native: read as base64, convert to Blob to prevent "Unsupported FormDataPart"
+        try {
+            const base64Data = await FileSystemLegacy.readAsStringAsync(audioUriOrBlob, {
+                encoding: FileSystemLegacy.EncodingType.Base64,
+            });
+            const bytes = base64ToUint8Array(base64Data);
+            const audioBlob = new Blob([bytes as any], { type: 'audio/m4a' });
+            const formData = new FormData();
+            formData.append('file', audioBlob, 'audio.m4a');
+            formData.append('model', 'whisper-large-v3-turbo');
+            formData.append('language', 'en');
+
+            const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${GROQ_KEY}` },
+                body: formData,
+            });
+            if (res.ok) {
+                const data = await res.json();
+                return (data.text || '').trim();
+            }
+        } catch (blobErr) {
+            console.warn('Native Base64 Blob fallback failed:', blobErr);
+        }
     }
 
+    // 2. Web or Blob-based upload
     const formData = new FormData();
-    if (typeof audioUriOrBlob === 'string') {
-        formData.append('file', {
-            uri: audioUriOrBlob,
-            name: 'audio.m4a',
-            type: 'audio/m4a',
-        } as any);
-    } else {
+    if (typeof audioUriOrBlob !== 'string') {
         formData.append('file', audioUriOrBlob, 'audio.webm');
+    } else if (audioUriOrBlob.startsWith('blob:') || audioUriOrBlob.startsWith('http') || audioUriOrBlob.startsWith('data:')) {
+        const response = await fetch(audioUriOrBlob);
+        const blob = await response.blob();
+        formData.append('file', blob, 'audio.webm');
+    } else {
+        formData.append('file', audioUriOrBlob as any);
     }
     formData.append('model', 'whisper-large-v3-turbo');
     formData.append('language', 'en');
 
     const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
         method: 'POST',
-        headers: {
-            Authorization: `Bearer ${LLM_API_KEY}`,
-        },
+        headers: { Authorization: `Bearer ${GROQ_KEY}` },
         body: formData,
     });
-
-    if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Whisper transcription failed (${res.status}): ${errText}`);
-    }
-
+    if (!res.ok) throw new Error(`Whisper transcription failed (${res.status}): ${await res.text()}`);
     const data = await res.json();
-    return data.text ? data.text.trim() : '';
+    return (data.text || '').trim();
 }
 
+// ── Study Material Extraction ────────────────────────────────────────────────
 export async function extractStudyMaterial(
     base64Images: string[] | string,
     targetSubject?: string,
     existingExtraction?: ExtractionData
 ): Promise<ExtractionData> {
     const images = Array.isArray(base64Images) ? base64Images : [base64Images];
-    if (images.length === 0) {
-        throw new Error('At least one image is required for analysis.');
-    }
+    if (images.length === 0) throw new Error('At least one image is required for analysis.');
 
-    if (!OPENROUTER_API_KEY && !GEMINI_API_KEY) {
-        throw new Error('No LLM provider configured. Set EXPO_PUBLIC_OPENROUTER_API_KEY or EXPO_PUBLIC_GEMINI_API_KEY.');
-    }
+    const subjectInst = targetSubject
+        ? `Designated subject: "${targetSubject}". Set "subject" strictly to "${targetSubject}".`
+        : 'Deduce a clear, concise subject (2-4 words, e.g. "Calculus II", "Data Structures").';
 
-    const subjectInstruction = targetSubject
-        ? `The user has designated the subject folder as: "${targetSubject}". You MUST set the "subject" field strictly to "${targetSubject}".`
-        : `Deduce a clear, concise subject (2-4 words, e.g. "Calculus II", "Data Structures", "Organic Chemistry") for folder grouping.`;
-
-    const existingContextInstruction = existingExtraction
-        ? `\nExisting note context (merge with the new images; preserve correct facts and add new ones):\n${compactExtractionContext(existingExtraction, 0)}`
+    const existingInst = existingExtraction
+        ? `\nAppending to "${existingExtraction.title}" (${existingExtraction.subject}). Merge previous notes: "${existingExtraction.generatedNotes}" with new content.`
         : '';
 
-    const promptText = `Analyze ${images.length} lecture/document image(s). ${subjectInstruction}${existingContextInstruction}
-Return ONLY JSON with this exact shape:
-{"subject":string,"title":string,"topics":[{"heading":string,"bullets":string[]}],"tasks":[{"title":string,"dueDate":string|null,"notes":string|null}],"rawText":string,"generatedNotes":string}
-Rules: dueDate is null when absent; generatedNotes is a cohesive 150-400 word synthesis; no markdown or extra text.`;
+    const prompt = `Analyze ${images.length} whiteboard/lecture/notebook image(s).
+${subjectInst}${existingInst}
+Return ONLY a valid JSON object strictly matching this schema:
+{
+  "subject": string,
+  "title": string,
+  "topics": [{ "heading": string, "bullets": string[] }],
+  "tasks": [{ "title": string, "dueDate": string | null, "notes": string | null }],
+  "rawText": string,
+  "generatedNotes": string
+}
+No markdown blocks or preambles. "dueDate" must be null if not visible. "generatedNotes" should be a 150-400 word cohesive summary.`;
 
-    let rawContent = '';
-
-    // 1. Try OpenRouter first (higher quota)
-    if (OPENROUTER_API_KEY) {
-        try {
-            rawContent = await callOpenRouterVision(promptText, images, 0.2);
-        } catch (orErr) {
-            console.warn('OpenRouter vision failed, trying Gemini fallback:', orErr);
-        }
-    }
-
-    // 2. Fallback to Gemini direct
-    if (!rawContent && GEMINI_API_KEY) {
-        const parts: any[] = [{ text: promptText }];
-        for (const img of images) {
-            parts.push({ inlineData: { mimeType: 'image/jpeg', data: img } });
-        }
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-        const response = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts }],
-                generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
-            }),
-        });
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Gemini Vision Request Failed (${response.status}): ${errText}`);
-        }
-        const data = await response.json();
-        rawContent = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    }
-
-    if (!rawContent) {
-        throw new Error('All LLM providers failed. Check your API keys and quotas.');
-    }
-
-    const parsed: ExtractionData = JSON.parse(sanitizeJsonResponse(rawContent));
-    if (targetSubject) {
-        parsed.subject = targetSubject;
-    }
+    const raw = await callVision(prompt, images);
+    const parsed = safeParse<ExtractionData>(raw, null as any);
+    if (!parsed) throw new Error('Failed to parse study material extraction response.');
+    if (targetSubject) parsed.subject = targetSubject;
     return parsed;
 }
 
-
+// ── Flashcard Generation ─────────────────────────────────────────────────────
 export async function generateFlashcards(extraction: ExtractionData): Promise<Flashcard[]> {
-    if (!LLM_API_KEY) {
-        throw new Error('EXPO_PUBLIC_LLM_API_KEY is not configured in environment variables.');
-    }
-
-    const promptText = `Create at least 10 high-quality study flashcards from the material below.
-Return ONLY {"flashcards":[{"question":string,"answer":string}]} with no markdown or extra text.
-${compactExtractionContext(extraction)}`;
+    const prompt = `Generate at least 10 high-quality flashcards based on this study material:
+${JSON.stringify(extraction)}
+Return ONLY a JSON object: { "flashcards": [{ "question": string, "answer": string }] }
+No preambles, no markdown.`;
 
     try {
-        const response = await fetch(LLM_ENDPOINT, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${LLM_API_KEY}`,
-            },
-            body: JSON.stringify({
-                model: GROQ_TEXT_MODEL,
-                temperature: 0.3,
-                response_format: { type: 'json_object' },
-                messages: [{ role: 'user', content: promptText }],
-            }),
-        });
-
-        if (!response.ok) {
-            throw new Error(`LLM Flashcard Request Failed with status ${response.status}`);
-        }
-
-        const data = await response.json();
-        const rawContent = data.choices?.[0]?.message?.content || '';
-        const parsed = JSON.parse(sanitizeJsonResponse(rawContent));
+        const raw = await callText(prompt, true);
+        const parsed = safeParse<{ flashcards: Flashcard[] }>(raw, { flashcards: [] });
         return parsed.flashcards || [];
     } catch (err) {
-        console.warn('Flashcard generation failed, gracefully falling back to empty list:', err);
+        console.warn('Flashcard generation failed, returning empty list:', err);
         return [];
     }
 }
 
+// ── Exam Extraction from Syllabus ────────────────────────────────────────────
 export interface ExtractedExamInfo {
     subject: string;
     examTitle: string;
@@ -314,58 +289,13 @@ export interface ExtractedExamInfo {
 }
 
 export async function extractExamFromSyllabus(base64Image: string): Promise<ExtractedExamInfo> {
-    if (!OPENROUTER_API_KEY && !GEMINI_API_KEY) {
-        throw new Error('No LLM provider configured.');
-    }
-
-    const promptText = `
-Analyze this syllabus, course schedule, or exam sheet document image.
-Detect any upcoming exams, midterms, finals, or major academic tests.
-Extract:
-1. "subject": The course name or code (e.g. "Automata Theory", "Discrete Mathematics", "Biology 101").
-2. "examTitle": Title of the exam (e.g. "Midterm Exam 1", "Final Exam").
-3. "examDate": Date of the exam (e.g. "Oct 24", "Nov 12, 2025").
-4. "examTag": A concise countdown or date tag (e.g. "Exam in 4 days", "Midterm: Oct 24", or "Finals: Dec 15").
-
+    const prompt = `Analyze this syllabus or schedule image for upcoming exams/midterms/finals.
 Return ONLY a JSON object:
-{
-  "subject": string,
-  "examTitle": string,
-  "examDate": string,
-  "examTag": string
-}
-No preambles, no markdown blocks.
-`;
+{ "subject": string, "examTitle": string, "examDate": string, "examTag": string }
+No preambles or markdown.`;
 
-    let candidate = '';
-
-    // 1. Try OpenRouter
-    if (OPENROUTER_API_KEY) {
-        try {
-            candidate = await callOpenRouterVision(promptText, [base64Image], 0.2);
-        } catch (e) {
-            console.warn('OpenRouter syllabus failed, trying Gemini:', e);
-        }
-    }
-
-    // 2. Fallback to Gemini
-    if (!candidate && GEMINI_API_KEY) {
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-        const response = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: 'image/jpeg', data: base64Image } }] }],
-            }),
-        });
-        if (!response.ok) throw new Error(`Gemini Syllabus Analysis failed (${response.status})`);
-        const result = await response.json();
-        candidate = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    }
-
-    if (!candidate) throw new Error('No response from any LLM provider for syllabus analysis.');
-
-    const parsed = JSON.parse(sanitizeJsonResponse(candidate));
+    const raw = await callVision(prompt, [base64Image]);
+    const parsed = safeParse<Partial<ExtractedExamInfo>>(raw, {});
     return {
         subject: parsed.subject || 'Course Exam',
         examTitle: parsed.examTitle || 'Upcoming Exam',
@@ -374,6 +304,7 @@ No preambles, no markdown blocks.
     };
 }
 
+// ── Multiple Choice Practice Questions (MCQ) ──────────────────────────────────
 export interface MCQQuestion {
     id: string;
     question: string;
@@ -384,217 +315,25 @@ export interface MCQQuestion {
     subject: string;
 }
 
-const CURATED_MCQS: MCQQuestion[] = [
-    // Automata Theory - Foundations
-    {
-        id: 'at_f_1',
-        subject: 'Automata Theory',
-        level: 'Foundations',
-        question: 'What does DFA stand for in formal language and computation theory?',
-        options: [
-            'Deterministic Finite Automaton',
-            'Dynamic Function Analysis',
-            'Direct Formulation Algorithm',
-            'Discrete Finite Architecture',
-        ],
-        correctIndex: 0,
-        explanation: 'A DFA is a Deterministic Finite Automaton where every transition is strictly determined by the current state and symbol.',
-    },
-    {
-        id: 'at_f_2',
-        subject: 'Automata Theory',
-        level: 'Foundations',
-        question: 'How many start states can a standard Deterministic Finite Automaton (DFA) possess?',
-        options: ['Exactly one (q0)', 'At least two', 'Arbitrary number', 'None if language is empty'],
-        correctIndex: 0,
-        explanation: 'In the formal 5-tuple (Q, Sigma, delta, q0, F), q0 in Q is the unique designated start state.',
-    },
-    // Automata Theory - Standard
-    {
-        id: 'at_s_1',
-        subject: 'Automata Theory',
-        level: 'Standard',
-        question: 'What is the primary scientific purpose of applying the Pumping Lemma in regular languages?',
-        options: [
-            'To prove a given language is NOT regular by contradiction',
-            'To minimize the number of states in a DFA',
-            'To convert an NFA into a regular expression',
-            'To construct a Pushdown Automaton',
-        ],
-        correctIndex: 0,
-        explanation: 'The Pumping Lemma is a necessary property of regular languages. Showing a language violates it proves non-regularity.',
-    },
-    {
-        id: 'at_s_2',
-        subject: 'Automata Theory',
-        level: 'Standard',
-        question: 'Which machine model is capable of recognizing Context-Free Languages (CFL)?',
-        options: [
-            'Pushdown Automaton (PDA)',
-            'Deterministic Finite Automaton (DFA)',
-            'Linear Bounded Automaton',
-            'Static Register Machine',
-        ],
-        correctIndex: 0,
-        explanation: 'Pushdown Automata augment finite states with a single LIFO stack, exactly matching Context-Free Grammars.',
-    },
-    // Automata Theory - Hard
-    {
-        id: 'at_h_1',
-        subject: 'Automata Theory',
-        level: 'Hard',
-        question: 'For L = {0^n 1^n | n >= 0}, why does pumping s = 0^p 1^p violate the regular pumping lemma?',
-        options: [
-            'Because y lies in 0^p, pumping y changes the count of 0s without matching 1s',
-            'Because the string exceeds maximum machine memory limit',
-            'Because the alphabet Sigma contains multiple symbols',
-            'Because the empty string is rejected by definition',
-        ],
-        correctIndex: 0,
-        explanation: 'Since |xy| <= p, the pumped substring y consists entirely of 0s. Pumping y^i disrupts the equal 0/1 balance.',
-    },
-    // Discrete Mathematics & Graph Theory - Foundations
-    {
-        id: 'dm_f_1',
-        subject: 'Graph Theory & Discrete Math',
-        level: 'Foundations',
-        question: 'What does the Handshaking Lemma state for an undirected graph G = (V, E)?',
-        options: [
-            'The sum of all vertex degrees equals 2 * |E|',
-            'Every vertex has an even degree',
-            'The number of vertices must be greater than edges',
-            'The graph must contain at least one cycle',
-        ],
-        correctIndex: 0,
-        explanation: 'Each undirected edge contributes exactly 1 degree to each of its two endpoint vertices, so sum(deg(v)) = 2|E|.',
-    },
-    {
-        id: 'dm_f_2',
-        subject: 'Graph Theory & Discrete Math',
-        level: 'Foundations',
-        question: 'What is the cardinality of the power set P(S) of a set with n elements?',
-        options: ['2^n', 'n^2', '2n', 'n!'],
-        correctIndex: 0,
-        explanation: 'Each element has 2 independent choices (included or excluded), giving exactly 2^n distinct subsets.',
-    },
-    // Discrete Mathematics & Graph Theory - Standard
-    {
-        id: 'dm_s_1',
-        subject: 'Graph Theory & Discrete Math',
-        level: 'Standard',
-        question: 'Which three mathematical properties define an Equivalence Relation?',
-        options: [
-            'Reflexive, Symmetric, and Transitive',
-            'Reflexive, Antisymmetric, and Transitive',
-            'Irreflexive, Symmetric, and Associative',
-            'Symmetric, Commutative, and Invertible',
-        ],
-        correctIndex: 0,
-        explanation: 'An equivalence relation partitions a set and must satisfy reflexivity, symmetry, and transitivity.',
-    },
-    {
-        id: 'dm_s_2',
-        subject: 'Graph Theory & Discrete Math',
-        level: 'Standard',
-        question: 'A simple graph G is bipartite if and only if it satisfies which condition?',
-        options: [
-            'G contains no odd cycles',
-            'G has an even number of vertices',
-            'G is planar with chromatic number 4',
-            'G contains a Hamiltonian cycle',
-        ],
-        correctIndex: 0,
-        explanation: 'König theorem proves that a graph is 2-colorable (bipartite) if and only if every cycle has even length (no odd cycles).',
-    },
-    // Discrete Mathematics & Graph Theory - Hard
-    {
-        id: 'dm_h_1',
-        subject: 'Graph Theory & Discrete Math',
-        level: 'Hard',
-        question: 'Under modular arithmetic, when does an integer a have a multiplicative inverse modulo m?',
-        options: [
-            'When gcd(a, m) = 1 (a and m are coprime)',
-            'When m is an even composite integer',
-            'When a > m and m divides a evenly',
-            'When a is a prime number greater than 2',
-        ],
-        correctIndex: 0,
-        explanation: 'By Bézout identity, ax + my = gcd(a, m). A solution for ax = 1 (mod m) exists if and only if gcd(a, m) = 1.',
-    },
+const mkQ = (id: string, subject: string, level: MCQQuestion['level'], question: string, options: string[], correctIndex: number, explanation: string): MCQQuestion =>
+    ({ id, subject, level, question, options, correctIndex, explanation });
 
-    // Biology 101: Cell Energetics - Foundations
-    {
-        id: 'bio_f_1',
-        subject: 'Biology 101: Cell Energetics',
-        level: 'Foundations',
-        question: 'Where within eukaryotic cells does the metabolic process of glycolysis take place?',
-        options: [
-            'In the cytosol (cytoplasm)',
-            'Inside the mitochondrial matrix',
-            'Along the inner mitochondrial cristae',
-            'Inside the Golgi apparatus lumen',
-        ],
-        correctIndex: 0,
-        explanation: 'Glycolysis occurs entirely within the cytosol and does not require oxygen or specialized membrane organelles.',
-    },
-    {
-        id: 'bio_f_2',
-        subject: 'Biology 101: Cell Energetics',
-        level: 'Foundations',
-        question: 'Which molecule acts as the primary reduced electron carrier generated in high quantities during the citric acid cycle?',
-        options: [
-            'NADH (and FADH2)',
-            'NADPH',
-            'Cytochrome C',
-            'Flavin Mononucleotide (FMN)',
-        ],
-        correctIndex: 0,
-        explanation: 'Each turn of the citric acid cycle reduces NAD+ and FAD into 3 NADH and 1 FADH2, carrying high-energy electrons to the ETC.',
-    },
-    // Biology 101: Cell Energetics - Standard
-    {
-        id: 'bio_s_1',
-        subject: 'Biology 101: Cell Energetics',
-        level: 'Standard',
-        question: 'What is the theoretical net ATP yield per oxidized glucose molecule under aerobic respiration in eukaryotic cells?',
-        options: [
-            'Approximately 30 to 32 ATP',
-            'Net 2 ATP',
-            'Exactly 38 ATP in all tissues',
-            'Net 12 ATP',
-        ],
-        correctIndex: 0,
-        explanation: 'Substrate-level phosphorylation plus chemiosmotic oxidative phosphorylation yields approximately 30 to 32 ATP per glucose.',
-    },
-    {
-        id: 'bio_s_2',
-        subject: 'Biology 101: Cell Energetics',
-        level: 'Standard',
-        question: 'Which committed rate-limiting enzyme in glycolysis is allosterically inhibited by elevated cellular ATP and citrate?',
-        options: [
-            'Phosphofructokinase-1 (PFK-1)',
-            'Hexokinase',
-            'Pyruvate Kinase',
-            'Glucose-6-Phosphate Isomerase',
-        ],
-        correctIndex: 0,
-        explanation: 'PFK-1 catalyzes the committed step (fructose-6-P to fructose-1,6-bisP) and is allosterically inhibited by high cellular energy charges.',
-    },
-    // Biology 101: Cell Energetics - Hard
-    {
-        id: 'bio_h_1',
-        subject: 'Biology 101: Cell Energetics',
-        level: 'Hard',
-        question: 'Why does the oxidation of one FADH2 yield fewer ATP equivalents than one NADH in oxidative phosphorylation?',
-        options: [
-            'FADH2 enters the ETC at Complex II, bypassing the first proton-pumping Complex I',
-            'FADH2 cannot donate electrons to Coenzyme Q (ubiquinone)',
-            'FADH2 releases protons directly into the matrix rather than the intermembrane space',
-            'FADH2 requires ATP hydrolysis to transport across the mitochondrial envelope',
-        ],
-        correctIndex: 0,
-        explanation: 'Complex II (Succinate Dehydrogenase) transfers electrons to ubiquinone without pumping protons across the inner membrane, producing a smaller proton motive force.',
-    },
+const CURATED_MCQS: MCQQuestion[] = [
+    mkQ('at_f_1', 'Automata Theory', 'Foundations', 'What does DFA stand for in computation theory?', ['Deterministic Finite Automaton', 'Dynamic Function Analysis', 'Direct Formulation Algorithm', 'Discrete Finite Architecture'], 0, 'A DFA is a Deterministic Finite Automaton where transitions are strictly determined.'),
+    mkQ('at_f_2', 'Automata Theory', 'Foundations', 'How many start states can a standard DFA possess?', ['Exactly one (q0)', 'At least two', 'Arbitrary number', 'None if language is empty'], 0, 'In formal 5-tuple (Q, Sigma, delta, q0, F), q0 is the unique start state.'),
+    mkQ('at_s_1', 'Automata Theory', 'Standard', 'What is the primary scientific purpose of the Pumping Lemma?', ['To prove a given language is NOT regular by contradiction', 'To minimize DFA states', 'To convert NFA into regex', 'To construct a PDA'], 0, 'Showing a language violates the pumping lemma proves it is non-regular.'),
+    mkQ('at_s_2', 'Automata Theory', 'Standard', 'Which machine model recognizes Context-Free Languages (CFL)?', ['Pushdown Automaton (PDA)', 'Deterministic Finite Automaton (DFA)', 'Linear Bounded Automaton', 'Static Register Machine'], 0, 'PDAs augment finite states with a single stack, matching Context-Free Grammars.'),
+    mkQ('at_h_1', 'Automata Theory', 'Hard', 'For L = {0^n 1^n | n >= 0}, why does pumping s = 0^p 1^p violate the pumping lemma?', ['Because y lies in 0^p, pumping y changes 0s without matching 1s', 'Because string exceeds memory limit', 'Because alphabet contains multiple symbols', 'Because empty string is rejected'], 0, 'Since |xy| <= p, y consists only of 0s. Pumping y disrupts equal balance.'),
+    mkQ('dm_f_1', 'Graph Theory & Discrete Math', 'Foundations', 'What does the Handshaking Lemma state for graph G = (V, E)?', ['The sum of all vertex degrees equals 2 * |E|', 'Every vertex has an even degree', 'Vertices must exceed edges', 'Graph must contain a cycle'], 0, 'Each undirected edge contributes 1 degree to each endpoint: sum(deg(v)) = 2|E|.'),
+    mkQ('dm_f_2', 'Graph Theory & Discrete Math', 'Foundations', 'What is the cardinality of power set P(S) of a set with n elements?', ['2^n', 'n^2', '2n', 'n!'], 0, 'Each element has 2 independent choices (in or out), giving 2^n subsets.'),
+    mkQ('dm_s_1', 'Graph Theory & Discrete Math', 'Standard', 'Which three properties define an Equivalence Relation?', ['Reflexive, Symmetric, and Transitive', 'Reflexive, Antisymmetric, and Transitive', 'Irreflexive, Symmetric, and Associative', 'Symmetric, Commutative, and Invertible'], 0, 'An equivalence relation partitions a set and must be reflexive, symmetric, and transitive.'),
+    mkQ('dm_s_2', 'Graph Theory & Discrete Math', 'Standard', 'A simple graph G is bipartite if and only if it satisfies which condition?', ['G contains no odd cycles', 'G has an even number of vertices', 'G is planar with chromatic number 4', 'G contains a Hamiltonian cycle'], 0, 'König theorem states a graph is bipartite iff every cycle has even length.'),
+    mkQ('dm_h_1', 'Graph Theory & Discrete Math', 'Hard', 'When does integer a have a multiplicative inverse modulo m?', ['When gcd(a, m) = 1 (coprime)', 'When m is even composite', 'When a > m and m divides a', 'When a is prime > 2'], 0, 'By Bézout identity, ax + my = 1 has an integer solution iff gcd(a, m) = 1.'),
+    mkQ('bio_f_1', 'Biology 101: Cell Energetics', 'Foundations', 'Where in eukaryotic cells does glycolysis take place?', ['In the cytosol (cytoplasm)', 'Inside mitochondrial matrix', 'Along inner cristae', 'Inside Golgi apparatus lumen'], 0, 'Glycolysis occurs in the cytosol and requires no oxygen or organelles.'),
+    mkQ('bio_f_2', 'Biology 101: Cell Energetics', 'Foundations', 'Which molecule is the primary electron carrier generated in the citric acid cycle?', ['NADH (and FADH2)', 'NADPH', 'Cytochrome C', 'Flavin Mononucleotide (FMN)'], 0, 'Each turn of the citric acid cycle generates 3 NADH and 1 FADH2 for the ETC.'),
+    mkQ('bio_s_1', 'Biology 101: Cell Energetics', 'Standard', 'What is theoretical net ATP yield per glucose under aerobic respiration?', ['Approximately 30 to 32 ATP', 'Net 2 ATP', 'Exactly 38 ATP in all tissues', 'Net 12 ATP'], 0, 'Oxidative phosphorylation plus substrate-level yields ~30-32 ATP per glucose.'),
+    mkQ('bio_s_2', 'Biology 101: Cell Energetics', 'Standard', 'Which rate-limiting enzyme in glycolysis is inhibited by ATP and citrate?', ['Phosphofructokinase-1 (PFK-1)', 'Hexokinase', 'Pyruvate Kinase', 'Glucose-6-Phosphate Isomerase'], 0, 'PFK-1 catalyzes the committed step and is allosterically inhibited by high energy charges.'),
+    mkQ('bio_h_1', 'Biology 101: Cell Energetics', 'Hard', 'Why does oxidation of FADH2 yield fewer ATP equivalents than NADH?', ['FADH2 enters ETC at Complex II, bypassing proton-pumping Complex I', 'FADH2 cannot donate electrons to Coenzyme Q', 'FADH2 releases protons to matrix', 'FADH2 requires ATP hydrolysis'], 0, 'Complex II transfers electrons to CoQ without pumping protons, producing lower PMF.')
 ];
 
 export async function generateMCQs(
@@ -602,250 +341,86 @@ export async function generateMCQs(
     level: 'Foundations' | 'Standard' | 'Hard',
     noteText?: string
 ): Promise<MCQQuestion[]> {
-    // Generate MCQs via LLM (OpenRouter first, then Gemini)
-    if ((OPENROUTER_API_KEY || GEMINI_API_KEY) && noteText && noteText.trim().length > 30) {
-                const mcqCacheKey = cacheKey('mcq', subject, level, noteText.trim());
-                const cached = getCachedResponse(mcqCacheKey);
-                if (cached) return JSON.parse(cached) as MCQQuestion[];
+    if (noteText && noteText.trim().length > 30) {
+        const prompt = `Generate 4 multiple-choice exam practice questions for "${subject}" at level "${level}".
+Context Notes: "${noteText.slice(0, 1200)}"
+Return ONLY a JSON array: [{ "question": string, "options": [string, string, string, string], "correctIndex": number, "explanation": string }]
+No markdown or preamble.`;
+
         try {
-                        const prompt = `Create 4 ${level}-level MCQs for ${subject} from these notes (four options each).
-Return ONLY JSON array [{"question":string,"options":[string,string,string,string],"correctIndex":0,"explanation":string]. No markdown.
-Notes: ${noteText.substring(0, 1200)}`;
-            let rawText = '';
-
-            // Try OpenRouter first
-            if (OPENROUTER_API_KEY) {
-                try {
-                    rawText = await callOpenRouterText(prompt, 0.3);
-                } catch (e) {
-                    console.warn('OpenRouter MCQ failed, trying Gemini:', e);
-                }
-            }
-
-            // Fallback to Gemini
-            if (!rawText && GEMINI_API_KEY) {
-                const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-                const response = await fetch(geminiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: prompt }] }],
-                        generationConfig: { temperature: 0.3, responseMimeType: 'application/json' },
-                    }),
-                });
-                if (response.ok) {
-                    const resData = await response.json();
-                    rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                }
-            }
-
-            if (rawText) {
-                const parsed = JSON.parse(sanitizeJsonResponse(rawText));
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    const questions = parsed.map((item, idx) => ({
-                        id: `ai_mcq_${Date.now()}_${idx}`,
-                        subject,
-                        level,
-                        question: item.question,
-                        options: item.options || ['A', 'B', 'C', 'D'],
-                        correctIndex: typeof item.correctIndex === 'number' ? item.correctIndex : 0,
-                        explanation: item.explanation || 'Verified correct choice based on course principles.',
-                    }));
-                    setCachedResponse(mcqCacheKey, JSON.stringify(questions));
-                    return questions;
-                }
+            const raw = await callText(prompt, true);
+            const parsed = safeParse<any[]>(raw, []);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                return parsed.map((item, idx) => ({
+                    id: `ai_mcq_${Date.now()}_${idx}`,
+                    subject,
+                    level,
+                    question: item.question,
+                    options: item.options || ['A', 'B', 'C', 'D'],
+                    correctIndex: typeof item.correctIndex === 'number' ? item.correctIndex : 0,
+                    explanation: item.explanation || 'Verified correct choice based on course principles.',
+                }));
             }
         } catch (e) {
             console.warn('MCQ generation fallback to curated bank:', e);
         }
     }
 
-    // Filter curated questions by subject & level using resilient subjectsMatch
-    const matching = CURATED_MCQS.filter(
-        (q) => subjectsMatch(q.subject, subject) && q.level === level
-    );
+    const matching = CURATED_MCQS.filter(q => subjectsMatch(q.subject, subject) && q.level === level);
+    if (matching.length) return matching;
 
-    if (matching.length > 0) return matching;
-
-    const bySubject = CURATED_MCQS.filter(
-        (q) => subjectsMatch(q.subject, subject)
-    );
-    if (bySubject.length > 0) return bySubject;
-
-    return CURATED_MCQS;
+    const bySubject = CURATED_MCQS.filter(q => subjectsMatch(q.subject, subject));
+    return bySubject.length ? bySubject : CURATED_MCQS;
 }
 
+// ── Collegiate AI Note Copilot ───────────────────────────────────────────────
 export async function askNoteAiDirectly(note: SavedNote, question: string): Promise<string> {
     const trimmed = question.trim();
     if (!trimmed) return 'Please ask a question about your lecture notes.';
 
-    const qaCacheKey = cacheKey('qa', note.id, String(note.createdAt), trimmed.toLowerCase());
-    const cachedAnswer = getCachedResponse(qaCacheKey);
-    if (cachedAnswer) return cachedAnswer;
+    const qaPrompt = `You are the CoCampus Collegiate AI Study Copilot. Answer directly, accurately, and concisely based strictly on these notes:
+Course Subject: ${note.subject}
+Note Title: ${note.title}
+Summary: ${note.extraction.generatedNotes}
+Topics: ${JSON.stringify(note.extraction.topics)}
+Tasks: ${JSON.stringify(note.extraction.tasks)}
+Question: "${trimmed}"
+Instructions:
+- Direct, collegiate-level answer immediately in the first sentence.
+- If asking for a formula/definition, state its components.
+- Keep response between 2 to 4 concise paragraphs or bullet points. No raw emojis.`;
 
-    // 1. Try OpenRouter first, then Gemini
-    const qaPrompt = `You are the CoCampus study copilot. Answer strictly from the note context below.
-Lead with the direct answer. Include formulas/definitions and a brief example when useful. Use 2-4 concise paragraphs or bullets. No emojis.
-Question: ${trimmed}
-Note context:
-${compactNoteContext(note)}`;
+    const answer = await callText(qaPrompt);
+    if (answer && answer.trim().length > 0) return answer.trim();
 
-    if (OPENROUTER_API_KEY) {
-        try {
-            const answer = await callOpenRouterText(qaPrompt, 0.3);
-            if (answer && answer.trim().length > 0) {
-                const normalized = answer.trim();
-                setCachedResponse(qaCacheKey, normalized);
-                return normalized;
-            }
-        } catch (e) {
-            console.warn('OpenRouter Q&A failed, trying Gemini:', e);
-        }
+    // Intelligent Local Note Grounding Engine (100% offline fallback)
+    const q = trimmed.toLowerCase();
+    if (q.includes('dfa') || q.includes('deterministic') || q.includes('finite automata')) {
+        return 'Deterministic Finite Automata (DFA) are models that recognize regular languages. Defined by 5-tuple (Q, Σ, δ, q0, F):\n\n• Q: Finite set of states.\n• Σ: Input alphabet.\n• δ: Transition function (Q × Σ → Q).\n• q0: Initial state.\n• F: Accepting states.\n\nStrictly one deterministic transition per state and symbol.';
+    }
+    if (q.includes('5-tuple') || q.includes('formal definition')) {
+        return 'The formal 5-tuple defining a Finite Automaton is (Q, Σ, δ, q0, F):\n\n1. Q: Finite set of states.\n2. Σ: Finite input alphabet.\n3. δ: Transition function.\n4. q0: Initial start state.\n5. F: Set of accepting states.';
+    }
+    if (q.includes('alphabet') || q.includes('sigma')) {
+        return 'In formal computation theory, an Alphabet (Σ) is a non-empty, finite set of symbols (e.g., {0, 1}). Strings are sequences over Σ; ε denotes the empty string.';
+    }
+    if (q.includes('exam') || q.includes('test') || q.includes('midterm')) {
+        return 'Key Exam Focus Points:\n\n1. State-transition completeness: Ensure no input symbol is unhandled.\n2. String tracing: Practice tracing binary strings step-by-step.\n3. Formal proofs: Be ready to write the formal 5-tuple and prove language closure.';
+    }
+    if (q.includes('summary') || q.includes('overview')) {
+        return `Executive Summary for "${note.title}":\n\n${note.extraction.generatedNotes}\n\nKey Concepts:\n${note.extraction.topics.map(t => `• ${t.heading}: ${t.bullets.slice(0, 2).join('; ')}`).join('\n')}`;
+    }
+    if ((q.includes('quiz') || q.includes('practice')) && note.flashcards?.length) {
+        const card = note.flashcards[Math.floor(Math.random() * note.flashcards.length)];
+        return `Practice Question for ${note.subject}:\n\n"${card.question}"\n\nCorrect Answer: ${card.answer}`;
     }
 
-    if (GEMINI_API_KEY) {
-        try {
-            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;  
-            const response = await fetch(geminiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: qaPrompt }] }],
-                    generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
-                }),
-            });
-            if (response.ok) {
-                const resData = await response.json();
-                const answer = resData.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (answer && answer.trim().length > 0) {
-                    const normalized = answer.trim();
-                    setCachedResponse(qaCacheKey, normalized);
-                    return normalized;
-                }
-            }
-        } catch (e) {
-            console.warn('Gemini Q&A failed, falling back to local synthesis:', e);
-        }
-    }
-
-    // 2. Try Groq/LLM API if key is available
-    if (LLM_API_KEY) {
-        try {
-            const prompt = `Answer this question strictly from the note context. Be direct and concise; no emojis or preamble.
-Question: ${trimmed}
-Context:
-${compactNoteContext(note)}`;
-            const response = await fetch(LLM_ENDPOINT, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${LLM_API_KEY}`,
-                },
-                body: JSON.stringify({
-                    model: GROQ_TEXT_MODEL,
-                    temperature: 0.3,
-                    messages: [{ role: 'user', content: prompt }],
-                }),
-            });
-            if (response.ok) {
-                const data = await response.json();
-                const answer = data.choices?.[0]?.message?.content;
-                if (answer && answer.trim().length > 0) {
-                    const normalized = answer.trim();
-                    setCachedResponse(qaCacheKey, normalized);
-                    return normalized;
-                }
-            }
-        } catch (e) {
-            console.warn('Groq direct Q&A failed, falling back to local synthesis:', e);
-        }
-    }
-
-    // 3. Intelligent Local Note Grounding Engine (Guaranteed 100% offline & instant)
-    const qLower = trimmed.toLowerCase();
-
-    // Automata Theory & DFA queries
-    if (qLower.includes('dfa') || qLower.includes('deterministic') || qLower.includes('finite automata')) {
-        return (
-            'Deterministic Finite Automata (DFA) are computational models used to recognize regular languages. ' +
-            'Every DFA is formally defined by a 5-tuple (Q, Σ, δ, q0, F):\n\n' +
-            '• Q: A finite set of states.\n' +
-            '• Σ: The finite input alphabet (e.g., {0, 1}).\n' +
-            '• δ: The transition function (Q × Σ → Q), mapping each state and input symbol to exactly one next state.\n' +
-            '• q0: The initial start state (q0 ∈ Q).\n' +
-            '• F: The set of accepting or final states (F ⊆ Q).\n\n' +
-            'Key property: For every state and symbol, there is strictly one deterministic transition.'
-        );
-    }
-
-    if (qLower.includes('5-tuple') || qLower.includes('tuple') || qLower.includes('formal definition')) {
-        return (
-            'The formal 5-tuple defining a Finite Automaton is (Q, Σ, δ, q0, F):\n\n' +
-            '1. Q: Finite set of states.\n' +
-            '2. Σ: Finite input alphabet.\n' +
-            '3. δ: Transition function (Q × Σ → Q for DFA).\n' +
-            '4. q0: Initial start state.\n' +
-            '5. F: Set of accepting states.\n\n' +
-            'Exam Tip: Make sure your state diagram has an explicit outgoing transition for every symbol in Σ from each state.'
-        );
-    }
-
-    if (qLower.includes('alphabet') || qLower.includes('sigma') || qLower.includes('symbol')) {
-        return (
-            'In formal computation theory, an Alphabet (denoted Σ) is a non-empty, finite set of symbols.\n\n' +
-            '• Common examples: binary alphabet {0, 1} or Latin alphabet {a, b, c}.\n' +
-            '• A string is a finite sequence of symbols chosen from Σ.\n' +
-            '• The empty string is denoted ε (epsilon), having length zero (|ε| = 0).'
-        );
-    }
-
-    if (qLower.includes('exam') || qLower.includes('test') || qLower.includes('midterm') || qLower.includes('focus')) {
-        return (
-            'Key Exam Focus Points from this lecture:\n\n' +
-            '1. State-transition completeness: Ensure no input symbol is unhandled in any active state.\n' +
-            '2. String tracing: Practice tracing binary strings (e.g., "10110101") step-by-step from q0 to q1.\n' +
-            '3. Formal proofs: Be ready to write the formal 5-tuple and prove language closure under union, concatenation, and star.'
-        );
-    }
-
-    if (qLower.includes('summary') || qLower.includes('summarize') || qLower.includes('overview') || qLower.includes('what is this note')) {
-        return (
-            `Executive Summary for "${note.title}":\n\n` +
-            note.extraction.generatedNotes +
-            '\n\nKey Concepts Covered:\n' +
-            note.extraction.topics.map((t: Topic) => `• ${t.heading}: ${t.bullets.slice(0, 2).join('; ')}`).join('\n')
-        );
-    }
-
-    if (qLower.includes('quiz') || qLower.includes('practice') || qLower.includes('test me')) {
-        if (note.flashcards && note.flashcards.length > 0) {
-            const randomCard = note.flashcards[Math.floor(Math.random() * note.flashcards.length)];
-            return `Practice Question for ${note.subject}:\n\n"${randomCard.question}"\n\nCorrect Answer: ${randomCard.answer}`;
-        }
-    }
-
-    // Semantic match against topics
-    const matchingTopic = note.extraction.topics.find((t: Topic) =>
-        t.heading.toLowerCase().split(' ').some((word: string) => word.length > 3 && qLower.includes(word))
+    const matchingTopic = note.extraction.topics.find(t =>
+        t.heading.toLowerCase().split(' ').some(w => w.length > 3 && q.includes(w))
     );
-
     if (matchingTopic) {
-        return (
-            `Regarding ${matchingTopic.heading}:\n\n` +
-            matchingTopic.bullets.map((b: string) => `• ${b}`).join('\n') +
-            `\n\nThis is a core milestone in ${note.subject}.`
-        );
+        return `Regarding ${matchingTopic.heading}:\n\n${matchingTopic.bullets.map(b => `• ${b}`).join('\n')}\n\nThis is a core milestone in ${note.subject}.`;
     }
 
-    // Default note synthesis
-    return (
-        `Based on your notes for "${note.title}":\n\n` +
-        note.extraction.generatedNotes.substring(0, 360) +
-        '...\n\nKey takeaways:\n' +
-        note.extraction.topics
-            .slice(0, 2)
-            .map((t: Topic) => `• ${t.heading}: ${t.bullets[0] || 'Core concept'}`)
-            .join('\n')
-    );
+    return `Based on your notes for "${note.title}":\n\n${note.extraction.generatedNotes.slice(0, 360)}...\n\nKey takeaways:\n${note.extraction.topics.slice(0, 2).map(t => `• ${t.heading}: ${t.bullets[0] || 'Core concept'}`).join('\n')}`;
 }
-
