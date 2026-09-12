@@ -18,7 +18,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
-import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync } from 'expo-audio';
+import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { SavedNote, YouTubeVideo } from '../types';
 import { getCuratedClipsForSubject } from '../services/youtube';
 import { askNoteAiDirectly, transcribeAudio } from '../services/llm';
@@ -63,6 +63,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     const aiSectionYRef = useRef<number>(0);
     const recognitionRef = useRef<any>(null);
     const isListeningRef = useRef<boolean>(false);
+    const latestTranscriptRef = useRef<string>('');
     const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
     // Mic Pulsing and Waveform loop
@@ -212,16 +213,25 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         isListeningRef.current = false;
         setIsListening(false);
 
-        // Web Speech Recognition
+        // 1. Web Speech Recognition
         if (recognitionRef.current) {
             try {
                 recognitionRef.current.stop();
             } catch {}
             recognitionRef.current = null;
+            const textToAsk = (latestTranscriptRef.current || questionInput).trim();
+            latestTranscriptRef.current = '';
+            if (textToAsk) {
+                setListeningStatus(`Heard: "${textToAsk}"`);
+                handleAskAi(textToAsk);
+            } else {
+                setListeningStatus('No speech recognized. Tap mic to speak.');
+                setTimeout(() => setListeningStatus(''), 3000);
+            }
             return;
         }
 
-        // Native Audio Recorder -> Groq Whisper transcription
+        // 2. Native Audio Recorder -> Groq Whisper transcription
         try {
             setListeningStatus('Transcribing your speech with AI...');
             await recorder.stop();
@@ -244,7 +254,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             setListeningStatus('Transcription unavailable. You can type your question.');
             setTimeout(() => setListeningStatus(''), 3500);
         }
-    }, [recorder, handleAskAi]);
+    }, [recorder, handleAskAi, questionInput]);
 
     const handleToggleMic = useCallback(async () => {
         if (isListeningRef.current) {
@@ -257,43 +267,80 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             scrollViewRef.current.scrollTo({ y: Math.max(0, aiSectionYRef.current - 20), animated: true });
         }
 
+        // Helper to launch Expo Audio recorder (used on Native or as Web fallback)
+        const startExpoRecorder = async () => {
+            try {
+                if (Platform.OS !== 'web') {
+                    await setAudioModeAsync({
+                        allowsRecording: true,
+                        playsInSilentMode: true,
+                    });
+                }
+                const perm = await requestRecordingPermissionsAsync();
+                if (!perm.granted) {
+                    setListeningStatus('Microphone permission required.');
+                    Alert.alert(
+                        'Microphone Permission Needed',
+                        'Please allow microphone access in your device settings to speak your study questions.'
+                    );
+                    return;
+                }
+
+                isListeningRef.current = true;
+                setIsListening(true);
+                setListeningStatus('Listening... Speak now (tap mic when done)');
+
+                await recorder.prepareToRecordAsync();
+                recorder.record();
+            } catch (recErr: any) {
+                console.warn('Audio recording failed to start:', recErr);
+                isListeningRef.current = false;
+                setIsListening(false);
+                setListeningStatus('Could not access microphone. Please type your question.');
+                setTimeout(() => setListeningStatus(''), 3500);
+            }
+        };
+
         // 1. Check Web Speech API support first for browser
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
             const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
             if (SpeechRec) {
                 try {
                     const rec = new SpeechRec();
-                    rec.continuous = false;
+                    rec.continuous = true;
                     rec.interimResults = true;
                     rec.lang = 'en-US';
+                    latestTranscriptRef.current = '';
 
                     rec.onstart = () => {
                         isListeningRef.current = true;
                         setIsListening(true);
-                        setListeningStatus('Listening... Speak your question now');
+                        setListeningStatus('Listening... Speak now (tap mic when done)');
                     };
 
                     rec.onresult = (evt: any) => {
-                        const transcript = Array.from(evt.results)
-                            .map((r: any) => r[0].transcript)
-                            .join('');
+                        let transcript = '';
+                        for (let i = 0; i < evt.results.length; i++) {
+                            transcript += evt.results[i][0].transcript;
+                        }
+                        latestTranscriptRef.current = transcript;
                         setQuestionInput(transcript);
                         setListeningStatus(`Heard: "${transcript}"`);
-                        if (evt.results[0]?.isFinal) {
-                            isListeningRef.current = false;
-                            setIsListening(false);
-                            handleAskAi(transcript);
-                        }
                     };
 
                     rec.onerror = (evt: any) => {
                         console.warn('Speech recognition error event:', evt?.error);
-                        isListeningRef.current = false;
-                        setIsListening(false);
+                        if (evt?.error === 'not-allowed' || evt?.error === 'network' || evt?.error === 'service-not-allowed') {
+                            // Fallback to Expo Audio MediaRecorder
+                            if (recognitionRef.current) {
+                                try { recognitionRef.current.stop(); } catch {}
+                                recognitionRef.current = null;
+                            }
+                            startExpoRecorder();
+                            return;
+                        }
                         if (evt?.error === 'no-speech') {
                             setListeningStatus('No speech heard. Tap mic to try again.');
-                        } else if (evt?.error === 'not-allowed') {
-                            setListeningStatus('Mic permission denied in browser.');
                         } else {
                             setListeningStatus('');
                         }
@@ -301,44 +348,28 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                     };
 
                     rec.onend = () => {
-                        isListeningRef.current = false;
-                        setIsListening(false);
+                        if (isListeningRef.current) {
+                            isListeningRef.current = false;
+                            setIsListening(false);
+                            const text = latestTranscriptRef.current.trim();
+                            latestTranscriptRef.current = '';
+                            if (text) {
+                                handleAskAi(text);
+                            }
+                        }
                     };
 
                     rec.start();
                     recognitionRef.current = rec;
                     return;
                 } catch (e) {
-                    console.warn('Speech recognition start failed:', e);
+                    console.warn('Speech recognition start failed, using Expo Audio:', e);
                 }
             }
         }
 
         // 2. Native Expo Audio recording
-        try {
-            const perm = await requestRecordingPermissionsAsync();
-            if (!perm.granted) {
-                setListeningStatus('Microphone permission required.');
-                Alert.alert(
-                    'Microphone Permission Needed',
-                    'Please allow microphone access in your device settings to speak your study questions.'
-                );
-                return;
-            }
-
-            isListeningRef.current = true;
-            setIsListening(true);
-            setListeningStatus('Listening... Speak now (Tap mic or "Done Speaking" when finished)');
-
-            await recorder.prepareToRecordAsync();
-            recorder.record();
-        } catch (recErr: any) {
-            console.warn('Audio recording failed to start:', recErr);
-            isListeningRef.current = false;
-            setIsListening(false);
-            setListeningStatus('Could not access microphone. Please type your question.');
-            setTimeout(() => setListeningStatus(''), 3500);
-        }
+        await startExpoRecorder();
     }, [handleStopMic, recorder, handleAskAi]);
 
     const handleToggleAnswerVoice = async () => {

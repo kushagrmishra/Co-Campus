@@ -120,10 +120,14 @@ async function callText(prompt: string, json = false): Promise<string> {
 export async function transcribeAudio(audioUriOrBlob: string | Blob): Promise<string> {
     if (!GROQ_KEY) throw new Error('LLM API key (Groq) is not configured.');
     const formData = new FormData();
-    if (typeof audioUriOrBlob === 'string') {
-        formData.append('file', { uri: audioUriOrBlob, name: 'audio.m4a', type: 'audio/m4a' } as any);
-    } else {
+    if (typeof audioUriOrBlob !== 'string') {
         formData.append('file', audioUriOrBlob, 'audio.webm');
+    } else if (audioUriOrBlob.startsWith('blob:') || audioUriOrBlob.startsWith('http') || audioUriOrBlob.startsWith('data:')) {
+        const response = await fetch(audioUriOrBlob);
+        const blob = await response.blob();
+        formData.append('file', blob, 'audio.webm');
+    } else {
+        formData.append('file', { uri: audioUriOrBlob, name: 'audio.m4a', type: 'audio/m4a' } as any);
     }
     formData.append('model', 'whisper-large-v3-turbo');
     formData.append('language', 'en');
