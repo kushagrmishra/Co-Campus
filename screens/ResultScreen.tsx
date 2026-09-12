@@ -146,6 +146,21 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         }
     }, [isListening, micPulseAnim, waveAnim1, waveAnim2, waveAnim3, waveAnim4]);
 
+    // Pre-initialize audio mode for seamless recording & playback
+    useEffect(() => {
+        if (Platform.OS !== 'web') {
+            setAudioModeAsync({
+                allowsRecording: true,
+                playsInSilentMode: true,
+                interruptionMode: 'mixWithOthers',
+                shouldPlayInBackground: false,
+                shouldRouteThroughEarpiece: false,
+            }).catch((err) => {
+                console.warn('Could not pre-set audio mode on ResultScreen mount:', err);
+            });
+        }
+    }, []);
+
     // Stop speech and mic on unmount
     useEffect(() => {
         return () => {
@@ -155,8 +170,13 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                     recognitionRef.current.stop();
                 } catch {}
             }
+            try {
+                if (recorder.isRecording) {
+                    recorder.stop();
+                }
+            } catch {}
         };
-    }, []);
+    }, [recorder]);
 
     // Guaranteed video clips: uses note's videos, or automatically resolves high-yield academic clips
     const curatedClips = useMemo<YouTubeVideo[]>(() => {
@@ -279,6 +299,14 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             return;
         }
 
+        // Silence any ongoing speech playback before listening
+        stopVoicePlayback();
+        try {
+            await Speech.stop();
+        } catch {}
+        setIsPlayingAudio(false);
+        setIsPlayingAnswerVoice(false);
+
         // Scroll to AI Copilot card
         if (scrollViewRef.current && aiSectionYRef.current > 0) {
             scrollViewRef.current.scrollTo({ y: Math.max(0, aiSectionYRef.current - 20), animated: true });
@@ -287,12 +315,6 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         // Helper to launch Expo Audio recorder (used on Native or as Web fallback)
         const startExpoRecorder = async () => {
             try {
-                if (Platform.OS !== 'web') {
-                    await setAudioModeAsync({
-                        allowsRecording: true,
-                        playsInSilentMode: true,
-                    });
-                }
                 const perm = await requestRecordingPermissionsAsync();
                 if (!perm.granted) {
                     setListeningStatus('Microphone permission required.');
@@ -301,6 +323,16 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                         'Please allow microphone access in your device settings to speak your study questions.'
                     );
                     return;
+                }
+
+                if (Platform.OS !== 'web') {
+                    await setAudioModeAsync({
+                        allowsRecording: true,
+                        playsInSilentMode: true,
+                        interruptionMode: 'mixWithOthers',
+                        shouldPlayInBackground: false,
+                        shouldRouteThroughEarpiece: false,
+                    });
                 }
 
                 isListeningRef.current = true;

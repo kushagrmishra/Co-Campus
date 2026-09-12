@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+import * as FileSystemLegacy from 'expo-file-system/legacy';
 import { ExtractionData, Flashcard, SavedNote, Topic } from '../types';
 import { subjectsMatch } from './storage';
 
@@ -116,9 +118,91 @@ async function callText(prompt: string, json = false): Promise<string> {
     return '';
 }
 
+// ── Base64 Decode Helper ─────────────────────────────────────────────────────
+function base64ToUint8Array(base64: string): Uint8Array {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const lookup = new Uint8Array(256);
+    for (let i = 0; i < chars.length; i++) {
+        lookup[chars.charCodeAt(i)] = i;
+    }
+    const clean = base64.replace(/[^A-Za-z0-9+/]/g, '');
+    let bufferLength = clean.length * 0.75;
+    if (clean.endsWith('==')) bufferLength -= 2;
+    else if (clean.endsWith('=')) bufferLength -= 1;
+    const bytes = new Uint8Array(bufferLength);
+    let p = 0;
+    for (let i = 0; i < clean.length; i += 4) {
+        const enc1 = lookup[clean.charCodeAt(i)];
+        const enc2 = lookup[clean.charCodeAt(i + 1)];
+        const enc3 = lookup[clean.charCodeAt(i + 2)];
+        const enc4 = lookup[clean.charCodeAt(i + 3)];
+        bytes[p++] = (enc1 << 2) | (enc2 >> 4);
+        if (p < bufferLength) bytes[p++] = ((enc2 & 15) << 4) | (enc3 >> 2);
+        if (p < bufferLength) bytes[p++] = ((enc3 & 3) << 6) | (enc4 & 63);
+    }
+    return bytes;
+}
+
 // ── Audio Transcription ──────────────────────────────────────────────────────
 export async function transcribeAudio(audioUriOrBlob: string | Blob): Promise<string> {
     if (!GROQ_KEY) throw new Error('LLM API key (Groq) is not configured.');
+
+    // 1. Native platform with local file:// URI -> Use FileSystem native multipart upload
+    if (typeof audioUriOrBlob === 'string' && Platform.OS !== 'web' && !audioUriOrBlob.startsWith('blob:') && !audioUriOrBlob.startsWith('http')) {
+        try {
+            const uploadResult = await FileSystemLegacy.uploadAsync(
+                'https://api.groq.com/openai/v1/audio/transcriptions',
+                audioUriOrBlob,
+                {
+                    httpMethod: 'POST',
+                    uploadType: FileSystemLegacy.FileSystemUploadType.MULTIPART,
+                    fieldName: 'file',
+                    mimeType: 'audio/m4a',
+                    parameters: {
+                        model: 'whisper-large-v3-turbo',
+                        language: 'en',
+                    },
+                    headers: {
+                        Authorization: `Bearer ${GROQ_KEY}`,
+                    },
+                }
+            );
+            if (uploadResult.status >= 200 && uploadResult.status < 300) {
+                const data = JSON.parse(uploadResult.body);
+                return (data.text || '').trim();
+            }
+            console.warn(`Native uploadAsync status ${uploadResult.status}: ${uploadResult.body}`);
+        } catch (uploadErr) {
+            console.warn('Native FileSystem uploadAsync failed, attempting Base64 Blob fallback:', uploadErr);
+        }
+
+        // Fallback for native: read as base64, convert to Blob to prevent "Unsupported FormDataPart"
+        try {
+            const base64Data = await FileSystemLegacy.readAsStringAsync(audioUriOrBlob, {
+                encoding: FileSystemLegacy.EncodingType.Base64,
+            });
+            const bytes = base64ToUint8Array(base64Data);
+            const audioBlob = new Blob([bytes as any], { type: 'audio/m4a' });
+            const formData = new FormData();
+            formData.append('file', audioBlob, 'audio.m4a');
+            formData.append('model', 'whisper-large-v3-turbo');
+            formData.append('language', 'en');
+
+            const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${GROQ_KEY}` },
+                body: formData,
+            });
+            if (res.ok) {
+                const data = await res.json();
+                return (data.text || '').trim();
+            }
+        } catch (blobErr) {
+            console.warn('Native Base64 Blob fallback failed:', blobErr);
+        }
+    }
+
+    // 2. Web or Blob-based upload
     const formData = new FormData();
     if (typeof audioUriOrBlob !== 'string') {
         formData.append('file', audioUriOrBlob, 'audio.webm');
@@ -127,7 +211,7 @@ export async function transcribeAudio(audioUriOrBlob: string | Blob): Promise<st
         const blob = await response.blob();
         formData.append('file', blob, 'audio.webm');
     } else {
-        formData.append('file', { uri: audioUriOrBlob, name: 'audio.m4a', type: 'audio/m4a' } as any);
+        formData.append('file', audioUriOrBlob as any);
     }
     formData.append('model', 'whisper-large-v3-turbo');
     formData.append('language', 'en');

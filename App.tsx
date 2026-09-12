@@ -14,6 +14,7 @@ import {
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { setAudioModeAsync } from 'expo-audio';
 import { HomeScreen } from './screens/Homescreen';
 import { CaptureScreen } from './screens/CaptureScreen';
 import { ResultsScreen } from './screens/ResultScreen';
@@ -357,6 +358,21 @@ function MainApp() {
                 clearTimeout(toastTimerRef.current);
             }
         };
+    }, []);
+
+    // Pre-initialize audio mode for seamless recording & playback across platforms
+    useEffect(() => {
+        if (Platform.OS !== 'web') {
+            setAudioModeAsync({
+                allowsRecording: true,
+                playsInSilentMode: true,
+                interruptionMode: 'mixWithOthers',
+                shouldPlayInBackground: false,
+                shouldRouteThroughEarpiece: false,
+            }).catch((err) => {
+                console.warn('Could not pre-configure audio mode on startup:', err);
+            });
+        }
     }, []);
 
     // Check login session with realistic skeleton pre-load
