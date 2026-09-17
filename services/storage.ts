@@ -642,21 +642,26 @@ async function getLocalFolders(): Promise<SubjectFolder[]> {
             }
         }
 
-        // Purge deleted sample biology folder and any user-deleted folders
-        if (currentFolders.some((f) => f.id === 'bio-101' || deletedIdsSet.has(f.id))) {
-            currentFolders = currentFolders.filter((f) => f.id !== 'bio-101' && !deletedIdsSet.has(f.id));
+        // Recompute active notes and preserve folders for all active notes
+        const notes = await getLocalNotes();
+        const activeSubjectSlugs = new Set(notes.map((n) => n.subjectSlug?.toLowerCase()).filter(Boolean));
+
+        // Purge deleted sample biology folder and any user-deleted folders (unless they have active notes)
+        if (currentFolders.some((f) => f.id === 'bio-101' || (deletedIdsSet.has(f.id) && !activeSubjectSlugs.has(f.id.toLowerCase())))) {
+            currentFolders = currentFolders.filter((f) => f.id !== 'bio-101' && (!deletedIdsSet.has(f.id) || activeSubjectSlugs.has(f.id.toLowerCase())));
             changed = true;
         }
 
         const existingIds = new Set(currentFolders.map((f) => f.id));
 
-        // Guarantee all default folders (Automata, Graph Theory) exist unless deleted by user
+        // Guarantee all default folders (Automata, Graph Theory) exist unless explicitly deleted and having no notes
         for (const defaultFolder of DEFAULT_FOLDERS) {
-            if (!existingIds.has(defaultFolder.id) && !deletedIdsSet.has(defaultFolder.id)) {
+            const hasNotes = activeSubjectSlugs.has(defaultFolder.id.toLowerCase());
+            if (!existingIds.has(defaultFolder.id) && (!deletedIdsSet.has(defaultFolder.id) || hasNotes)) {
                 currentFolders.push(defaultFolder);
                 existingIds.add(defaultFolder.id);
                 changed = true;
-            } else if (!deletedIdsSet.has(defaultFolder.id)) {
+            } else if (!deletedIdsSet.has(defaultFolder.id) || hasNotes) {
                 const idx = currentFolders.findIndex((f) => f.id === defaultFolder.id);
                 if (idx !== -1) {
                     const cur = currentFolders[idx];
@@ -672,8 +677,20 @@ async function getLocalFolders(): Promise<SubjectFolder[]> {
             }
         }
 
+        // Guarantee every note has a corresponding subject folder
+        for (const n of notes) {
+            if (n.subjectSlug && !currentFolders.some((f) => f.id.toLowerCase() === n.subjectSlug.toLowerCase())) {
+                currentFolders.push({
+                    id: n.subjectSlug,
+                    name: n.subject,
+                    noteCount: 1,
+                    updatedAt: n.createdAt,
+                });
+                changed = true;
+            }
+        }
+
         // Recompute note counts dynamically based on local notes
-        const notes = await getLocalNotes();
         for (const f of currentFolders) {
             const count = notes.filter(
                 (n) => subjectsMatch(n.subjectSlug, f.id) || subjectsMatch(n.subject, f.name)
@@ -958,16 +975,9 @@ export async function fetchSubjectFolders(): Promise<SubjectFolder[]> {
                 }
             }
 
-            // 2. Merge remote folders from Firebase
+            // 2. Merge remote folders from Firebase (never filter out active cloud folders)
             if (!snapshot.empty) {
-                const remoteFolders = snapshot.docs
-                    .map((d) => d.data() as SubjectFolder)
-                    .filter(
-                        (f) =>
-                            !deletedIdsSet.has(f.id.toLowerCase()) &&
-                            !deletedIdsSet.has(slugify(f.name).toLowerCase()) &&
-                            !deletedIdsSet.has(f.name.toLowerCase())
-                    );
+                const remoteFolders = snapshot.docs.map((d) => d.data() as SubjectFolder);
 
                 const map = new Map<string, SubjectFolder>();
                 for (const f of localFolders) map.set(f.id, f);
@@ -979,6 +989,18 @@ export async function fetchSubjectFolders(): Promise<SubjectFolder[]> {
                         updatedAt: Math.max(f.updatedAt || 0, local?.updatedAt || 0),
                     });
                 }
+
+                // If remote folders exist in Firestore, un-tombstone them from local deleted list
+                try {
+                    const deletedJson = await AsyncStorage.getItem('@cocampus_deleted_folder_ids');
+                    if (deletedJson) {
+                        const delIds: string[] = JSON.parse(deletedJson);
+                        const remoteIds = new Set(remoteFolders.map(rf => rf.id.toLowerCase()));
+                        const cleanDel = delIds.filter(id => !remoteIds.has(id.toLowerCase()));
+                        await AsyncStorage.setItem('@cocampus_deleted_folder_ids', JSON.stringify(cleanDel));
+                    }
+                } catch {}
+
                 const merged = Array.from(map.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
                 await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(merged));
                 return merged;
@@ -1108,7 +1130,6 @@ export async function forceRefreshStorage(): Promise<{ notes: SavedNote[]; folde
                         updatedAt: Math.max(rf.updatedAt || 0, existing?.updatedAt || 0),
                     });
                 }
-                const mergedFolders = Array.from(folderMap.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
                 // 4. Pull all remote scans from Firebase
                 const scansRef = collection(db, 'scans');
@@ -1128,6 +1149,24 @@ export async function forceRefreshStorage(): Promise<{ notes: SavedNote[]; folde
                     }
                 }
                 const mergedNotes = Array.from(notesMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+                // Guarantee every note in mergedNotes has a subject folder in folderMap
+                for (const n of mergedNotes) {
+                    if (n.subjectSlug && !folderMap.has(n.subjectSlug)) {
+                        folderMap.set(n.subjectSlug, {
+                            id: n.subjectSlug,
+                            name: n.subject,
+                            noteCount: 1,
+                            updatedAt: n.createdAt,
+                        });
+                    }
+                }
+                const mergedFolders = Array.from(folderMap.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+                // Clear local tombstone blocklist so active cloud folders are never hidden
+                try {
+                    await AsyncStorage.removeItem('@cocampus_deleted_folder_ids');
+                } catch {}
 
                 await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(mergedFolders));
                 await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(mergedNotes));
