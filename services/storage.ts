@@ -41,6 +41,33 @@ async function ensureFsDirectories(): Promise<boolean> {
     }
 }
 
+export async function getActiveUserId(): Promise<string> {
+    try {
+        const authUser = await AsyncStorage.getItem('@cocampus_auth_user');
+        if (authUser && authUser.trim()) {
+            return authUser.trim().toLowerCase();
+        }
+    } catch {}
+
+    try {
+        const user = await ensureAnonymousAuth();
+        if (user?.uid) {
+            return user.uid;
+        }
+    } catch {}
+
+    try {
+        let deviceId = await AsyncStorage.getItem('@cocampus_device_uid');
+        if (!deviceId) {
+            deviceId = `user_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+            await AsyncStorage.setItem('@cocampus_device_uid', deviceId);
+        }
+        return deviceId;
+    } catch {
+        return 'default_student';
+    }
+}
+
 export function slugify(text: string): string {
     const cleaned = text
         .toLowerCase()
@@ -703,9 +730,8 @@ export async function createSubjectFolder(name: string): Promise<SubjectFolder> 
     }
 
     try {
-        const user = await ensureAnonymousAuth();
-        if (user && db) {
-            const userId = user.uid;
+        const userId = await getActiveUserId();
+        if (db) {
             const subjectDocRef = doc(db, `users/${userId}/subjects/${uniqueSlug}`);
             await setDoc(subjectDocRef, folder, { merge: true });
         }
@@ -784,9 +810,8 @@ export async function deleteSubjectFolder(folderIdOrSlug: string): Promise<boole
 
         // 5. Delete folder from Firebase if available
         try {
-            const user = await ensureAnonymousAuth();
-            if (user && db) {
-                const userId = user.uid;
+            const userId = await getActiveUserId();
+            if (db) {
                 await deleteDoc(doc(db, `users/${userId}/subjects/${idToRemove}`));
                 if (folderIdOrSlug !== idToRemove) {
                     await deleteDoc(doc(db, `users/${userId}/subjects/${folderIdOrSlug}`));
@@ -838,16 +863,25 @@ export async function saveNoteToFirestore(
     // Always persist to local device storage immediately
     await saveNoteLocally(noteData);
 
-    // Attempt Firebase sync in background / gracefully
-    try {
-        const user = await ensureAnonymousAuth();
-        if (user && db) {
-            const userId = user.uid;
+    // Upload scan and note to Firebase Firestore
+    if (db) {
+        try {
+            const userId = await getActiveUserId();
+
+            // 1. Upload directly to dedicated 'scans' collection in Firebase
+            const scanDocRef = doc(db, 'scans', noteId);
+            await setDoc(scanDocRef, {
+                ...noteData,
+                userId,
+                scannedAt: new Date(now).toISOString(),
+            }, { merge: true });
+
+            // 2. Upload to user's organized subjects/notes folder hierarchy in Firebase
             const subjectDocRef = doc(db, `users/${userId}/subjects/${subjectSlug}`);
             const notesCollectionRef = collection(db, `users/${userId}/subjects/${subjectSlug}/notes`);
             const noteDocRef = doc(notesCollectionRef, noteId);
 
-            await setDoc(noteDocRef, noteData);
+            await setDoc(noteDocRef, noteData, { merge: true });
 
             const subjectDocSnap = await getDoc(subjectDocRef);
             if (!subjectDocSnap.exists()) {
@@ -863,9 +897,10 @@ export async function saveNoteToFirestore(
                     updatedAt: now,
                 });
             }
+            console.log(`[Firebase] Scan & note '${noteData.title}' (${noteId}) uploaded to Firebase successfully!`);
+        } catch (firebaseErr) {
+            console.warn('Firebase scan sync skipped, note saved locally:', firebaseErr);
         }
-    } catch (firebaseErr) {
-        console.warn('Firebase sync skipped, note saved locally:', firebaseErr);
     }
 
     return noteData;
@@ -878,9 +913,8 @@ export async function fetchSubjectFolders(): Promise<SubjectFolder[]> {
         const deletedFolderIds: string[] = deletedFoldersJson ? JSON.parse(deletedFoldersJson) : [];
         const deletedIdsSet = new Set(deletedFolderIds.map((s) => s.toLowerCase()));
 
-        const user = await ensureAnonymousAuth();
-        if (user && db) {
-            const userId = user.uid;
+        const userId = await getActiveUserId();
+        if (db) {
             const subjectsRef = collection(db, `users/${userId}/subjects`);
             const q = query(subjectsRef, orderBy('updatedAt', 'desc'));
             const snapshot = await getDocs(q);
@@ -951,9 +985,8 @@ export async function fetchNotesBySubject(subjectSlug: string): Promise<SavedNot
 
     // 3. Remote Firebase sync for this folder
     try {
-        const user = await ensureAnonymousAuth();
-        if (user && db) {
-            const userId = user.uid;
+        const userId = await getActiveUserId();
+        if (db) {
             const notesRef = collection(db, `users/${userId}/subjects/${subjectSlug}/notes`);
             const q = query(notesRef, orderBy('createdAt', 'desc'));
             const snapshot = await getDocs(q);
@@ -991,19 +1024,28 @@ export async function forceRefreshStorage(): Promise<{ notes: SavedNote[]; folde
         const localNotes = await getLocalNotes();
         const localFolders = await getLocalFolders();
 
-        // Push all seed notes and folders to Firebase if available
+        // Push all local scans and folders to Firebase
         try {
-            const user = await ensureAnonymousAuth();
-            if (user && db) {
-                const userId = user.uid;
+            const userId = await getActiveUserId();
+            if (db) {
                 for (const folder of localFolders) {
                     const subjectDocRef = doc(db, `users/${userId}/subjects/${folder.id}`);
                     await setDoc(subjectDocRef, folder, { merge: true });
                 }
                 for (const note of localNotes) {
+                    // 1. Upload to dedicated 'scans' collection
+                    const scanDocRef = doc(db, 'scans', note.id);
+                    await setDoc(scanDocRef, {
+                        ...note,
+                        userId,
+                        scannedAt: new Date(note.createdAt).toISOString(),
+                    }, { merge: true });
+
+                    // 2. Upload to user's subject folder
                     const noteDocRef = doc(db, `users/${userId}/subjects/${note.subjectSlug}/notes/${note.id}`);
                     await setDoc(noteDocRef, note, { merge: true });
                 }
+                console.log(`[Firebase] Successfully synced ${localNotes.length} scans & ${localFolders.length} folders to Firebase.`);
             }
         } catch (firebaseErr) {
             console.warn('Firebase sync during force refresh skipped:', firebaseErr);

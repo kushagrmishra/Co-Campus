@@ -8,6 +8,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "build": "expo export -p web",
     "build:web": "expo export -p web",
     "deploy:hosting": "expo export -p web && firebase deploy --only hosting",
     "build:apk": "dotenv -e .env -- eas build -p android --profile preview",

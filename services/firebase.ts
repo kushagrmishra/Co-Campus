@@ -2,7 +2,6 @@ import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { initializeAuth, getAuth, getReactNativePersistence, signInAnonymously, Auth, User } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 
 const firebaseConfig = {
     apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -22,26 +21,18 @@ if (!getApps().length) {
 
 let auth: Auth | null = null;
 try {
-    if (Platform.OS === 'web') {
+    console.log('[CoCampus Firebase] Attempting initializeAuth with getReactNativePersistence...');
+    auth = initializeAuth(app, {
+        persistence: getReactNativePersistence(AsyncStorage),
+    });
+    console.log('[CoCampus Firebase] initializeAuth succeeded!');
+} catch (initErr: any) {
+    console.warn('[CoCampus Firebase] initializeAuth failed with error:', initErr?.code || initErr?.message, initErr);
+    try {
         auth = getAuth(app);
-    } else {
-        // For React Native / iOS, initializeAuth MUST be called first to register the component
-        try {
-            auth = initializeAuth(app, {
-                persistence: getReactNativePersistence(AsyncStorage),
-            });
-        } catch (initErr) {
-            // If already initialized (e.g. Fast Refresh in development)
-            try {
-                auth = getAuth(app);
-            } catch {
-                auth = null;
-            }
-        }
+    } catch {
+        auth = null;
     }
-} catch (err) {
-    console.warn('Firebase Auth could not be initialized:', err);
-    auth = null;
 }
 
 let db: Firestore | null = null;

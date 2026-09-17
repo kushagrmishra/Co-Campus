@@ -33,3 +33,4 @@ web-build/
 # Agents & tooling
 .agents/
 skills-lock.json
+.claude/
