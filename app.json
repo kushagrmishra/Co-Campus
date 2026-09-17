@@ -37,15 +37,15 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "a79bed8e-5de6-4157-bcd8-ebc66342e4cc"
+        "projectId": "3f3f1e93-5d62-476b-ada6-c31db6bba99a"
       }
     },
-    "owner": "makerfan4s-team",
+    "owner": "gdgbuilders-team",
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/a79bed8e-5de6-4157-bcd8-ebc66342e4cc"
+      "url": "https://u.expo.dev/3f3f1e93-5d62-476b-ada6-c31db6bba99a"
     }
   }
 }
