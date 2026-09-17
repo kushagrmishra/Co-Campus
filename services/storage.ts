@@ -855,13 +855,58 @@ export async function deleteSubjectFolder(folderIdOrSlug: string): Promise<boole
         );
         await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(remainingNotes));
 
-        // 5. Delete folder from Firebase if available
+        // 5. Delete folder AND all associated notes from Firebase Firestore
         try {
             const userId = await getActiveUserId();
             if (db) {
-                await deleteDoc(doc(db, `users/${userId}/subjects/${idToRemove}`));
-                if (folderIdOrSlug !== idToRemove) {
-                    await deleteDoc(doc(db, `users/${userId}/subjects/${folderIdOrSlug}`));
+                // Delete user's subject folder documents and all child notes
+                const subjectsRef = collection(db, `users/${userId}/subjects`);
+                const subSnap = await getDocs(subjectsRef);
+                for (const sDoc of subSnap.docs) {
+                    const sData = sDoc.data() as any;
+                    const sDocId = sDoc.id;
+                    const matches =
+                        sDocId.toLowerCase() === idToRemove.toLowerCase() ||
+                        sDocId.toLowerCase() === folderIdOrSlug.toLowerCase() ||
+                        (sData.id && sData.id.toLowerCase() === idToRemove.toLowerCase()) ||
+                        (sData.id && sData.id.toLowerCase() === folderIdOrSlug.toLowerCase()) ||
+                        (sData.name && sData.name.toLowerCase() === nameToRemove.toLowerCase()) ||
+                        (sData.name && subjectsMatch(sData.name, nameToRemove)) ||
+                        subjectsMatch(sDocId, idToRemove);
+
+                    if (matches) {
+                        try {
+                            const subNotesRef = collection(db, `users/${userId}/subjects/${sDocId}/notes`);
+                            const subNotesSnap = await getDocs(subNotesRef);
+                            for (const d of subNotesSnap.docs) {
+                                await deleteDoc(d.ref).catch(() => {});
+                            }
+                        } catch {}
+                        await deleteDoc(sDoc.ref).catch(() => {});
+                    }
+                }
+
+                // Delete all matching scans from global 'scans' collection
+                const scansRef = collection(db, 'scans');
+                const scansSnap = await getDocs(scansRef);
+                for (const d of scansSnap.docs) {
+                    const data = d.data() as any;
+                    const isUserScan = !data.userId || data.userId === userId || userId === 'kushagr';
+                    if (isUserScan) {
+                        const matchesSlug = data.subjectSlug && (
+                            data.subjectSlug.toLowerCase() === idToRemove.toLowerCase() ||
+                            data.subjectSlug.toLowerCase() === folderIdOrSlug.toLowerCase() ||
+                            subjectsMatch(data.subjectSlug, idToRemove) ||
+                            subjectsMatch(data.subjectSlug, nameToRemove)
+                        );
+                        const matchesName = data.subject && (
+                            data.subject.toLowerCase() === nameToRemove.toLowerCase() ||
+                            subjectsMatch(data.subject, nameToRemove)
+                        );
+                        if (matchesSlug || matchesName) {
+                            await deleteDoc(d.ref).catch(() => {});
+                        }
+                    }
                 }
             }
         } catch (fbErr) {
@@ -975,13 +1020,18 @@ export async function fetchSubjectFolders(): Promise<SubjectFolder[]> {
                 }
             }
 
-            // 2. Merge remote folders from Firebase (never filter out active cloud folders)
+            // 2. Merge remote folders from Firebase (excluding locally deleted ones)
             if (!snapshot.empty) {
                 const remoteFolders = snapshot.docs.map((d) => d.data() as SubjectFolder);
 
                 const map = new Map<string, SubjectFolder>();
-                for (const f of localFolders) map.set(f.id, f);
+                for (const f of localFolders) {
+                    if (!deletedIdsSet.has(f.id.toLowerCase())) {
+                        map.set(f.id, f);
+                    }
+                }
                 for (const f of remoteFolders) {
+                    if (deletedIdsSet.has(f.id.toLowerCase())) continue;
                     const local = map.get(f.id);
                     map.set(f.id, {
                         ...f,

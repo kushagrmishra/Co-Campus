@@ -10,6 +10,7 @@ import {
     Platform,
     Modal,
     Alert,
+    ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -40,30 +41,14 @@ export const FolderDetailScreen: React.FC<FolderDetailScreenProps> = ({
     const bottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 16 : 12);
     const [activeTab, setActiveTab] = useState<'all' | 'lectures' | 'decks' | 'assignments'>('all');
     const [showMenu, setShowMenu] = useState<boolean>(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
+    const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
     const courseCode = (folder.id || 'SUBJ').substring(0, 8).toUpperCase();
 
     const handleDeleteFolder = () => {
         setShowMenu(false);
-        Alert.alert(
-            'Delete Subject Folder',
-            `Are you sure you want to remove "${folder.name}" and all its saved notes? This action cannot be undone.`,
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Delete',
-                    style: 'destructive',
-                    onPress: async () => {
-                        await deleteSubjectFolder(folder.id);
-                        if (onDeleteFolder) {
-                            onDeleteFolder(folder);
-                        } else {
-                            onBack();
-                        }
-                    },
-                },
-            ]
-        );
+        setShowDeleteConfirm(true);
     };
 
     return (
@@ -154,6 +139,60 @@ export const FolderDetailScreen: React.FC<FolderDetailScreenProps> = ({
                         </TouchableOpacity>
                     </View>
                 </TouchableOpacity>
+            </Modal>
+
+            {/* Folder Deletion Confirmation Modal */}
+            <Modal visible={showDeleteConfirm} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalBox}>
+                        <View style={styles.modalHeaderRow}>
+                            <Text style={[styles.modalHeading, { color: '#ba1a1a' }]}>Delete Folder?</Text>
+                            <TouchableOpacity onPress={() => setShowDeleteConfirm(false)}>
+                                <Ionicons name="close" size={22} color="#182232" />
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={[styles.modalSubheading, { marginVertical: 14 }]}>
+                            Are you sure you want to delete "{folder.name}" and all of its notes? This action cannot be undone.
+                        </Text>
+
+                        <View style={styles.modalButtonsRow}>
+                            <TouchableOpacity
+                                style={styles.modalCancelBtn}
+                                onPress={() => setShowDeleteConfirm(false)}
+                                disabled={isDeleting}
+                            >
+                                <Text style={styles.modalCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.modalConfirmBtn, { backgroundColor: '#ba1a1a' }]}
+                                disabled={isDeleting}
+                                onPress={async () => {
+                                    setIsDeleting(true);
+                                    try {
+                                        await deleteSubjectFolder(folder.id);
+                                        setShowDeleteConfirm(false);
+                                        if (onDeleteFolder) {
+                                            onDeleteFolder(folder);
+                                        } else {
+                                            onBack();
+                                        }
+                                    } catch (err) {
+                                        console.error('Delete folder error:', err);
+                                    } finally {
+                                        setIsDeleting(false);
+                                    }
+                                }}
+                            >
+                                {isDeleting ? (
+                                    <ActivityIndicator size="small" color="#ffffff" />
+                                ) : (
+                                    <Text style={styles.modalConfirmText}>Delete</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
             </Modal>
 
             <ScrollView
@@ -829,5 +868,70 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: '700',
         letterSpacing: 0.2,
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
+    },
+    modalBox: {
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 24,
+        width: '100%',
+        maxWidth: 400,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.15,
+        shadowRadius: 24,
+        elevation: 8,
+    },
+    modalHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    modalHeading: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#182232',
+    },
+    modalSubheading: {
+        fontSize: 14,
+        color: '#75777d',
+        lineHeight: 20,
+    },
+    modalButtonsRow: {
+        flexDirection: 'row',
+        gap: 12,
+        marginTop: 8,
+    },
+    modalCancelBtn: {
+        flex: 1,
+        paddingVertical: 14,
+        borderRadius: 12,
+        backgroundColor: '#f1f0ec',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    modalCancelText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#45474c',
+    },
+    modalConfirmBtn: {
+        flex: 1,
+        paddingVertical: 14,
+        borderRadius: 12,
+        backgroundColor: '#182232',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    modalConfirmText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#ffffff',
     },
 });

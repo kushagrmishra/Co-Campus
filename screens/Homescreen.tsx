@@ -99,6 +99,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const [allRecentNotes, setAllRecentNotes] = useState<SavedNote[]>([]);
     const [refreshing, setRefreshing] = useState<boolean>(false);
     const [showAccountModal, setShowAccountModal] = useState<boolean>(false);
+    const [actionFolder, setActionFolder] = useState<SubjectFolder | null>(null);
+    const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<SubjectFolder | null>(null);
+    const [isDeletingFolder, setIsDeletingFolder] = useState<boolean>(false);
     const [studyStats, setStudyStats] = useState<StudyStats>({
         streakDays: 1,
         retentionPct: 85,
@@ -234,38 +237,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     };
 
     const handleFolderOptions = (folder: SubjectFolder) => {
-        Alert.alert(
-            folder.name,
-            'Folder Actions',
-            [
-                {
-                    text: 'Open Folder',
-                    onPress: () => handleFolderTap(folder),
-                },
-                {
-                    text: 'Delete Folder',
-                    style: 'destructive',
-                    onPress: () => {
-                        Alert.alert(
-                            'Delete Subject Folder',
-                            `Are you sure you want to delete "${folder.name}" and all of its notes? This action cannot be undone.`,
-                            [
-                                { text: 'Cancel', style: 'cancel' },
-                                {
-                                    text: 'Delete',
-                                    style: 'destructive',
-                                    onPress: async () => {
-                                        await deleteSubjectFolder(folder.id);
-                                        await loadData();
-                                    },
-                                },
-                            ]
-                        );
-                    },
-                },
-                { text: 'Cancel', style: 'cancel' },
-            ]
-        );
+        setActionFolder(folder);
     };
 
     const handleSelectTerm = async (term: string) => {
@@ -647,7 +619,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                                         </View>
                                         <TouchableOpacity
                                             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                                            onPress={() => handleFolderOptions(folder)}
+                                            onPress={(e: any) => {
+                                                if (e?.stopPropagation) {
+                                                    e.stopPropagation();
+                                                }
+                                                if (e?.nativeEvent?.stopPropagation) {
+                                                    e.nativeEvent.stopPropagation();
+                                                }
+                                                handleFolderOptions(folder);
+                                            }}
                                         >
                                             <Ionicons name="ellipsis-vertical" size={18} color="#75777d" />
                                         </TouchableOpacity>
@@ -882,6 +862,107 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                                 <Text style={styles.modalConfirmText}>Sign Out / Switch Student Account</Text>
                             </TouchableOpacity>
                         )}
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Folder Actions Modal */}
+            <Modal visible={!!actionFolder} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalBox}>
+                        <View style={styles.modalHeaderRow}>
+                            <Text style={styles.modalHeading}>{actionFolder?.name || 'Folder Actions'}</Text>
+                            <TouchableOpacity onPress={() => setActionFolder(null)}>
+                                <Ionicons name="close" size={22} color="#182232" />
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={styles.modalSubheading}>
+                            Choose an action for this subject folder.
+                        </Text>
+
+                        <TouchableOpacity
+                            style={[styles.modalConfirmBtn, { marginBottom: 10, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }]}
+                            onPress={() => {
+                                if (actionFolder) handleFolderTap(actionFolder);
+                                setActionFolder(null);
+                            }}
+                        >
+                            <Ionicons name="folder-open-outline" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                            <Text style={styles.modalConfirmText}>Open Folder</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.modalConfirmBtn, { backgroundColor: '#ba1a1a', marginBottom: 10, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }]}
+                            onPress={() => {
+                                setConfirmDeleteFolder(actionFolder);
+                                setActionFolder(null);
+                            }}
+                        >
+                            <Ionicons name="trash-outline" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                            <Text style={styles.modalConfirmText}>Delete Folder</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.modalCancelBtn, { paddingVertical: 12 }]}
+                            onPress={() => setActionFolder(null)}
+                        >
+                            <Text style={styles.modalCancelText}>Cancel</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Folder Deletion Confirmation Modal */}
+            <Modal visible={!!confirmDeleteFolder} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalBox}>
+                        <View style={styles.modalHeaderRow}>
+                            <Text style={[styles.modalHeading, { color: '#ba1a1a' }]}>Delete Folder?</Text>
+                            <TouchableOpacity onPress={() => setConfirmDeleteFolder(null)}>
+                                <Ionicons name="close" size={22} color="#182232" />
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={[styles.modalSubheading, { marginVertical: 14 }]}>
+                            Are you sure you want to delete "{confirmDeleteFolder?.name}" and all of its notes? This will permanently remove them from your device and cloud library.
+                        </Text>
+
+                        <View style={styles.modalButtonsRow}>
+                            <TouchableOpacity
+                                style={styles.modalCancelBtn}
+                                onPress={() => setConfirmDeleteFolder(null)}
+                                disabled={isDeletingFolder}
+                            >
+                                <Text style={styles.modalCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.modalConfirmBtn, { backgroundColor: '#ba1a1a' }]}
+                                disabled={isDeletingFolder}
+                                onPress={async () => {
+                                    if (!confirmDeleteFolder) return;
+                                    setIsDeletingFolder(true);
+                                    const targetId = confirmDeleteFolder.id;
+                                    try {
+                                        await deleteSubjectFolder(targetId);
+                                        setFolders((prev) => prev.filter((f) => f.id !== targetId));
+                                        setNotes((prev) => prev.filter((n) => n.subjectSlug !== targetId));
+                                        setAllRecentNotes((prev) => prev.filter((n) => n.subjectSlug !== targetId));
+                                        setConfirmDeleteFolder(null);
+                                        await loadData();
+                                    } catch (err) {
+                                        console.error('Delete folder error:', err);
+                                    } finally {
+                                        setIsDeletingFolder(false);
+                                    }
+                                }}
+                            >
+                                {isDeletingFolder ? (
+                                    <ActivityIndicator size="small" color="#ffffff" />
+                                ) : (
+                                    <Text style={styles.modalConfirmText}>Delete</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
             </Modal>
