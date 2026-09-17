@@ -22,7 +22,10 @@
       },
       "package": "com.cocampus.app",
       "permissions": [
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ]
     },
     "web": {
@@ -34,15 +37,15 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "fb6d4a58-9de9-4f9e-a047-0d3c5c4391b5"
+        "projectId": "a79bed8e-5de6-4157-bcd8-ebc66342e4cc"
       }
     },
-    "owner": "maker_fan4",
+    "owner": "makerfan4s-team",
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/fb6d4a58-9de9-4f9e-a047-0d3c5c4391b5"
+      "url": "https://u.expo.dev/a79bed8e-5de6-4157-bcd8-ebc66342e4cc"
     }
   }
 }
