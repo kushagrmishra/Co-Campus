@@ -14,14 +14,45 @@ const GROQ_MODEL = 'openai/gpt-oss-20b';
 
 // ── Parsing & Sanitization ───────────────────────────────────────────────────
 function cleanJson(raw: string): string {
-    return raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    if (!raw || typeof raw !== 'string') return '';
+    const text = raw.trim();
+
+    // 1. If wrapped in markdown code fence anywhere
+    const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (codeBlock && codeBlock[1]) {
+        return codeBlock[1].trim();
+    }
+
+    // 2. Extract outermost JSON object { ... }
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+        return text.slice(firstBrace, lastBrace + 1);
+    }
+
+    // 3. Extract outermost JSON array [ ... ]
+    const firstBracket = text.indexOf('[');
+    const lastBracket = text.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket > firstBracket) {
+        return text.slice(firstBracket, lastBracket + 1);
+    }
+
+    return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
 }
 
 function safeParse<T>(raw: string, fallback: T): T {
+    if (!raw) return fallback;
+    const cleaned = cleanJson(raw);
     try {
-        return JSON.parse(cleanJson(raw));
+        return JSON.parse(cleaned);
     } catch {
-        return fallback;
+        // Try removing trailing commas
+        try {
+            const noTrailingCommas = cleaned.replace(/,\s*([}\]])/g, '$1');
+            return JSON.parse(noTrailingCommas);
+        } catch {
+            return fallback;
+        }
     }
 }
 
@@ -98,13 +129,23 @@ async function callGroq(prompt: string, json = false, maxTokens = 1000): Promise
     return data.choices?.[0]?.message?.content || '';
 }
 
-/** Unified vision caller: cascades OpenRouter -> Gemini */
-async function callVision(prompt: string, images: string[], maxTokens = 1200): Promise<string> {
-    if (OPENROUTER_KEY) {
-        try { return await callOpenRouter(prompt, images, 0.2, maxTokens); } catch (e) { console.warn('OpenRouter vision failed:', e); }
-    }
+/** Unified vision caller: cascades Gemini -> OpenRouter */
+async function callVision(prompt: string, images: string[], maxTokens = 2500): Promise<string> {
     if (GEMINI_KEY) {
-        try { return await callGemini(prompt, images, true, maxTokens); } catch (e) { console.warn('Gemini vision failed:', e); }
+        try {
+            const res = await callGemini(prompt, images, true, maxTokens);
+            if (res && res.trim()) return res;
+        } catch (e) {
+            console.warn('Gemini vision failed, trying fallback:', e);
+        }
+    }
+    if (OPENROUTER_KEY) {
+        try {
+            const res = await callOpenRouter(prompt, images, 0.2, maxTokens);
+            if (res && res.trim()) return res;
+        } catch (e) {
+            console.warn('OpenRouter vision failed:', e);
+        }
     }
     throw new Error('All vision LLM providers failed. Check your API keys.');
 }
@@ -260,10 +301,42 @@ Return ONLY valid JSON:
 }
 "dueDate" must be null if not visible. "generatedNotes": 150-350 word cohesive summary.`;
 
-    const raw = await callVision(prompt, images, 1200);
-    const parsed = safeParse<ExtractionData>(raw, null as any);
-    if (!parsed) throw new Error('Failed to parse study material extraction response.');
+    const raw = await callVision(prompt, images, 2500);
+    let parsed = safeParse<ExtractionData>(raw, null as any);
+
+    if (!parsed || typeof parsed !== 'object' || (!parsed.subject && !parsed.generatedNotes && !parsed.title)) {
+        console.warn('[Vision] Standard JSON parse failed, constructing robust fallback from text output:', raw.slice(0, 300));
+        const fallbackSubject = targetSubject || 'Study Notes';
+        const rawTrimmed = (raw || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+        parsed = {
+            subject: fallbackSubject,
+            title: targetSubject ? `${targetSubject} Notes` : 'Scanned Lecture Notes',
+            topics: [
+                {
+                    heading: 'Lecture Overview',
+                    bullets: rawTrimmed.split('\n').map(l => l.replace(/^[*-•\d.]+\s*/, '').trim()).filter(l => l.length > 5).slice(0, 5),
+                }
+            ],
+            tasks: [],
+            rawText: rawTrimmed.slice(0, 2000),
+            generatedNotes: rawTrimmed.length > 20 ? rawTrimmed.slice(0, 1500) : 'Extracted study notes and active recall material from document scan.',
+        };
+    }
+
     if (targetSubject) parsed.subject = targetSubject;
+    if (!parsed.topics || !Array.isArray(parsed.topics) || parsed.topics.length === 0) {
+        parsed.topics = [{ heading: 'Key Concepts', bullets: ['Core principles and definitions from lecture scan.'] }];
+    }
+    if (!parsed.tasks || !Array.isArray(parsed.tasks)) {
+        parsed.tasks = [];
+    }
+    if (!parsed.generatedNotes) {
+        parsed.generatedNotes = parsed.rawText || 'Summary of scanned lecture notes.';
+    }
+    if (!parsed.title) {
+        parsed.title = `${parsed.subject || 'Lecture'} Study Notes`;
+    }
+
     return parsed;
 }
 

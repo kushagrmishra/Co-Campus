@@ -21,7 +21,7 @@ import { StudyScreen } from './screens/StudyScreen';
 import { LoginScreen, AUTH_STORAGE_KEY } from './screens/LoginScreen';
 import { AppSkeleton } from './components/AppSkeleton';
 import { SavedNote, SubjectFolder } from './types';
-import { fetchSubjectFolders, fetchAllLocalNotes } from './services/storage';
+import { fetchSubjectFolders, fetchAllLocalNotes, forceRefreshStorage } from './services/storage';
 import { CircleMenu } from './components/CircleMenu';
 
 type BottomTab = 'folders' | 'notes' | 'study' | 'stats';
@@ -394,13 +394,20 @@ function MainApp() {
     // Refresh all notes for Study screen and Library
     const loadAllNotes = useCallback(async () => {
         try {
-            const fetchedFolders = await fetchSubjectFolders();
+            const { notes: notesList, folders: fetchedFolders } = await forceRefreshStorage();
             setFolders(fetchedFolders);
-
-            const notesList = await fetchAllLocalNotes();
             setAllNotes(notesList);
         } catch (err) {
-            console.error('Failed to load notes for app:', err);
+            console.error('Failed to load notes via forceRefreshStorage, falling back:', err);
+            try {
+                const fetchedFolders = await fetchSubjectFolders();
+                setFolders(fetchedFolders);
+
+                const notesList = await fetchAllLocalNotes();
+                setAllNotes(notesList);
+            } catch (fallbackErr) {
+                console.error('Failed to load notes for app:', fallbackErr);
+            }
         }
     }, []);
 

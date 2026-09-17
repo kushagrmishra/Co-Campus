@@ -49,23 +49,8 @@ export async function getActiveUserId(): Promise<string> {
         }
     } catch {}
 
-    try {
-        const user = await ensureAnonymousAuth();
-        if (user?.uid) {
-            return user.uid;
-        }
-    } catch {}
-
-    try {
-        let deviceId = await AsyncStorage.getItem('@cocampus_device_uid');
-        if (!deviceId) {
-            deviceId = `user_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
-            await AsyncStorage.setItem('@cocampus_device_uid', deviceId);
-        }
-        return deviceId;
-    } catch {
-        return 'default_student';
-    }
+    // Default shared student account across Web and Mobile
+    return 'kushagr';
 }
 
 export function slugify(text: string): string {
@@ -438,7 +423,51 @@ async function getLocalNotes(): Promise<SavedNote[]> {
 }
 
 export async function fetchAllLocalNotes(): Promise<SavedNote[]> {
-    return getLocalNotes();
+    const localNotes = await getLocalNotes();
+    try {
+        const userId = await getActiveUserId();
+        if (db) {
+            const scansRef = collection(db, 'scans');
+            const snapshot = await getDocs(scansRef);
+
+            // Upload any local note missing in Firestore scans
+            const remoteDocIds = new Set(snapshot.docs.map(d => d.id));
+            for (const ln of localNotes) {
+                if (!remoteDocIds.has(ln.id)) {
+                    try {
+                        await setDoc(doc(db, 'scans', ln.id), {
+                            ...ln,
+                            userId,
+                            scannedAt: new Date(ln.createdAt).toISOString(),
+                        }, { merge: true });
+                        if (ln.subjectSlug) {
+                            await setDoc(doc(db, `users/${userId}/subjects/${ln.subjectSlug}/notes/${ln.id}`), ln, { merge: true });
+                        }
+                    } catch {}
+                }
+            }
+
+            const map = new Map<string, SavedNote>();
+            for (const n of localNotes) map.set(n.id, n);
+            for (const d of snapshot.docs) {
+                const r = d.data() as any;
+                if (!r.userId || r.userId === userId) {
+                    const existing = map.get(r.id);
+                    map.set(r.id, {
+                        ...existing,
+                        ...r,
+                        imageUris: r.imageUris && r.imageUris.length > 0 ? r.imageUris : existing?.imageUris,
+                    });
+                }
+            }
+            const merged = Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(merged));
+            return merged;
+        }
+    } catch (err) {
+        console.warn('fetchAllLocalNotes remote sync error:', err);
+    }
+    return localNotes;
 }
 
 export async function updateFolderExam(
@@ -916,9 +945,19 @@ export async function fetchSubjectFolders(): Promise<SubjectFolder[]> {
         const userId = await getActiveUserId();
         if (db) {
             const subjectsRef = collection(db, `users/${userId}/subjects`);
-            const q = query(subjectsRef, orderBy('updatedAt', 'desc'));
-            const snapshot = await getDocs(q);
+            const snapshot = await getDocs(subjectsRef);
 
+            // 1. Upload local folders to Firebase if missing remotely
+            const remoteDocIds = new Set(snapshot.docs.map(d => d.id.toLowerCase()));
+            for (const lf of localFolders) {
+                if (!remoteDocIds.has(lf.id.toLowerCase()) && !deletedIdsSet.has(lf.id.toLowerCase())) {
+                    try {
+                        await setDoc(doc(db, `users/${userId}/subjects/${lf.id}`), lf, { merge: true });
+                    } catch {}
+                }
+            }
+
+            // 2. Merge remote folders from Firebase
             if (!snapshot.empty) {
                 const remoteFolders = snapshot.docs
                     .map((d) => d.data() as SubjectFolder)
@@ -939,7 +978,7 @@ export async function fetchSubjectFolders(): Promise<SubjectFolder[]> {
                         updatedAt: Math.max(f.updatedAt || 0, local?.updatedAt || 0),
                     });
                 }
-                const merged = Array.from(map.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+                const merged = Array.from(map.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
                 await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(merged));
                 return merged;
             }
@@ -988,8 +1027,17 @@ export async function fetchNotesBySubject(subjectSlug: string): Promise<SavedNot
         const userId = await getActiveUserId();
         if (db) {
             const notesRef = collection(db, `users/${userId}/subjects/${subjectSlug}/notes`);
-            const q = query(notesRef, orderBy('createdAt', 'desc'));
-            const snapshot = await getDocs(q);
+            const snapshot = await getDocs(notesRef);
+
+            // Upload any local subject notes missing remotely
+            const remoteDocIds = new Set(snapshot.docs.map(d => d.id));
+            for (const ln of localSubjectNotes) {
+                if (!remoteDocIds.has(ln.id)) {
+                    try {
+                        await setDoc(doc(db, `users/${userId}/subjects/${subjectSlug}/notes/${ln.id}`), ln, { merge: true });
+                    } catch {}
+                }
+            }
 
             if (!snapshot.empty) {
                 const remoteNotes = snapshot.docs.map((d) => d.data() as SavedNote);
@@ -1006,7 +1054,7 @@ export async function fetchNotesBySubject(subjectSlug: string): Promise<SavedNot
                                 : local?.imageUris || undefined,
                     });
                 }
-                const merged = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+                const merged = Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
                 AsyncStorage.setItem(partitionKey, JSON.stringify(merged)).catch(() => {});
                 return merged;
             }
@@ -1020,20 +1068,20 @@ export async function fetchNotesBySubject(subjectSlug: string): Promise<SavedNot
 
 export async function forceRefreshStorage(): Promise<{ notes: SavedNote[]; folders: SubjectFolder[] }> {
     try {
-        // Ensure local items are thoroughly reconciled
         const localNotes = await getLocalNotes();
         const localFolders = await getLocalFolders();
 
-        // Push all local scans and folders to Firebase
-        try {
-            const userId = await getActiveUserId();
-            if (db) {
+        const userId = await getActiveUserId();
+        if (db) {
+            try {
+                // 1. Push all local folders to Firebase
                 for (const folder of localFolders) {
                     const subjectDocRef = doc(db, `users/${userId}/subjects/${folder.id}`);
                     await setDoc(subjectDocRef, folder, { merge: true });
                 }
+
+                // 2. Push all local notes to Firebase
                 for (const note of localNotes) {
-                    // 1. Upload to dedicated 'scans' collection
                     const scanDocRef = doc(db, 'scans', note.id);
                     await setDoc(scanDocRef, {
                         ...note,
@@ -1041,14 +1089,52 @@ export async function forceRefreshStorage(): Promise<{ notes: SavedNote[]; folde
                         scannedAt: new Date(note.createdAt).toISOString(),
                     }, { merge: true });
 
-                    // 2. Upload to user's subject folder
                     const noteDocRef = doc(db, `users/${userId}/subjects/${note.subjectSlug}/notes/${note.id}`);
                     await setDoc(noteDocRef, note, { merge: true });
                 }
-                console.log(`[Firebase] Successfully synced ${localNotes.length} scans & ${localFolders.length} folders to Firebase.`);
+
+                // 3. Pull all remote folders from Firebase
+                const subjectsRef = collection(db, `users/${userId}/subjects`);
+                const subSnap = await getDocs(subjectsRef);
+                const folderMap = new Map<string, SubjectFolder>();
+                for (const f of localFolders) folderMap.set(f.id, f);
+                for (const d of subSnap.docs) {
+                    const rf = d.data() as SubjectFolder;
+                    const existing = folderMap.get(rf.id);
+                    folderMap.set(rf.id, {
+                        ...rf,
+                        noteCount: Math.max(rf.noteCount || 0, existing?.noteCount || 0),
+                        updatedAt: Math.max(rf.updatedAt || 0, existing?.updatedAt || 0),
+                    });
+                }
+                const mergedFolders = Array.from(folderMap.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+                // 4. Pull all remote scans from Firebase
+                const scansRef = collection(db, 'scans');
+                const scansSnap = await getDocs(scansRef);
+                const notesMap = new Map<string, SavedNote>();
+                for (const n of localNotes) notesMap.set(n.id, n);
+                for (const d of scansSnap.docs) {
+                    const rn = d.data() as any;
+                    if (!rn.userId || rn.userId === userId) {
+                        const existing = notesMap.get(rn.id);
+                        notesMap.set(rn.id, {
+                            ...existing,
+                            ...rn,
+                            imageUris: (rn.imageUris && rn.imageUris.length > 0) ? rn.imageUris : existing?.imageUris,
+                        });
+                    }
+                }
+                const mergedNotes = Array.from(notesMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+                await AsyncStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(mergedFolders));
+                await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(mergedNotes));
+
+                console.log(`[Firebase] Successfully bidirectional synced ${mergedNotes.length} notes & ${mergedFolders.length} folders.`);
+                return { notes: mergedNotes, folders: mergedFolders };
+            } catch (firebaseErr) {
+                console.warn('Firebase sync during force refresh error:', firebaseErr);
             }
-        } catch (firebaseErr) {
-            console.warn('Firebase sync during force refresh skipped:', firebaseErr);
         }
 
         await AsyncStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(localNotes));
