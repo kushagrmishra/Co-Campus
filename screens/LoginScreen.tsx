@@ -15,6 +15,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppSkeleton } from '../components/AppSkeleton';
+import { db } from '../services/firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export const AUTH_STORAGE_KEY = '@cocampus_auth_user';
 
@@ -43,22 +45,58 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             return;
         }
 
+        if (trimmedUser.length < 2) {
+            setErrorMessage('Username must be at least 2 characters.');
+            return;
+        }
+
+        if (trimmedPass.length < 3) {
+            setErrorMessage('Password must be at least 3 characters.');
+            return;
+        }
+
         setLoading(true);
 
-        setTimeout(async () => {
+        try {
+            // Default demo account fast-track
             if (trimmedUser === 'kushagr' && trimmedPass === 'user1') {
-                try {
-                    await AsyncStorage.setItem(AUTH_STORAGE_KEY, 'kushagr');
-                } catch (e) {
-                    console.warn('Failed to save auth state:', e);
-                }
+                await AsyncStorage.setItem(AUTH_STORAGE_KEY, 'kushagr');
                 setLoading(false);
                 onLoginSuccess('kushagr');
-            } else {
-                setLoading(false);
-                setErrorMessage('Invalid username or password. Please use kushagr / user1.');
+                return;
             }
-        }, 500);
+
+            // Universal student cloud account check or registration
+            if (db) {
+                const userDocRef = doc(db, 'users', trimmedUser);
+                const userSnap = await getDoc(userDocRef);
+
+                if (userSnap.exists()) {
+                    const data = userSnap.data();
+                    if (data.password && data.password !== trimmedPass) {
+                        setLoading(false);
+                        setErrorMessage('Incorrect password for this student account.');
+                        return;
+                    }
+                } else {
+                    // Create new student account in Firestore
+                    await setDoc(userDocRef, {
+                        username: trimmedUser,
+                        password: trimmedPass,
+                        createdAt: Date.now(),
+                    }, { merge: true });
+                }
+            }
+
+            await AsyncStorage.setItem(AUTH_STORAGE_KEY, trimmedUser);
+            setLoading(false);
+            onLoginSuccess(trimmedUser);
+        } catch (e: any) {
+            console.warn('Student login fallback to local session:', e);
+            await AsyncStorage.setItem(AUTH_STORAGE_KEY, trimmedUser);
+            setLoading(false);
+            onLoginSuccess(trimmedUser);
+        }
     };
 
     if (loading) {
@@ -165,11 +203,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                             )}
                         </TouchableOpacity>
 
-                        {/* Quiet Credentials Helper */}
+                        {/* Universal Student Credentials Helper */}
                         <View style={styles.credentialPill}>
-                            <Ionicons name="key-outline" size={14} color="#4b6456" />
+                            <Ionicons name="school-outline" size={14} color="#4b6456" />
                             <Text style={styles.credentialPillText}>
-                                Authorized login: <Text style={styles.boldText}>kushagr</Text> • Password: <Text style={styles.boldText}>user1</Text>
+                                Sign in with any student username & password • Quick demo: <Text style={styles.boldText}>kushagr / user1</Text>
                             </Text>
                         </View>
                     </View>

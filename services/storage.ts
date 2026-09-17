@@ -451,7 +451,8 @@ export async function fetchAllLocalNotes(): Promise<SavedNote[]> {
             for (const n of localNotes) map.set(n.id, n);
             for (const d of snapshot.docs) {
                 const r = d.data() as any;
-                if (!r.userId || r.userId === userId) {
+                const isOwner = r.userId ? r.userId === userId : userId === 'kushagr';
+                if (isOwner) {
                     const existing = map.get(r.id);
                     map.set(r.id, {
                         ...existing,
@@ -1116,7 +1117,8 @@ export async function forceRefreshStorage(): Promise<{ notes: SavedNote[]; folde
                 for (const n of localNotes) notesMap.set(n.id, n);
                 for (const d of scansSnap.docs) {
                     const rn = d.data() as any;
-                    if (!rn.userId || rn.userId === userId) {
+                    const isOwner = rn.userId ? rn.userId === userId : userId === 'kushagr';
+                    if (isOwner) {
                         const existing = notesMap.get(rn.id);
                         notesMap.set(rn.id, {
                             ...existing,
@@ -1302,4 +1304,12 @@ export async function getStudyStats(): Promise<{
             hasRealActivity: false,
         };
     }
+}
+
+export async function clearLocalStorageOnLogout(): Promise<void> {
+    try {
+        await AsyncStorage.removeItem(STORAGE_KEY_NOTES);
+        await AsyncStorage.removeItem(STORAGE_KEY_FOLDERS);
+        await AsyncStorage.removeItem('@cocampus_auth_user');
+    } catch {}
 }

@@ -21,7 +21,7 @@ import { StudyScreen } from './screens/StudyScreen';
 import { LoginScreen, AUTH_STORAGE_KEY } from './screens/LoginScreen';
 import { AppSkeleton } from './components/AppSkeleton';
 import { SavedNote, SubjectFolder } from './types';
-import { fetchSubjectFolders, fetchAllLocalNotes, forceRefreshStorage } from './services/storage';
+import { fetchSubjectFolders, fetchAllLocalNotes, forceRefreshStorage, clearLocalStorageOnLogout } from './services/storage';
 import { CircleMenu } from './components/CircleMenu';
 
 type BottomTab = 'folders' | 'notes' | 'study' | 'stats';
@@ -383,12 +383,21 @@ function MainApp() {
                     // Display collegiate skeleton loader before resolving initial login state
                     new Promise((resolve) => setTimeout(resolve, 850)),
                 ]);
-                setIsLoggedIn(user === 'kushagr');
+                setIsLoggedIn(!!(user && user.trim()));
             } catch {
                 setIsLoggedIn(false);
             }
         }
         checkAuth();
+    }, []);
+
+    const handleLogout = useCallback(async () => {
+        try {
+            await clearLocalStorageOnLogout();
+        } catch {}
+        setIsLoggedIn(false);
+        setFolders([]);
+        setAllNotes([]);
     }, []);
 
     // Refresh all notes for Study screen and Library
@@ -537,6 +546,7 @@ function MainApp() {
                         onSelectNote={handleSelectNote}
                         onQuickReviewPress={() => handleSelectTab('study')}
                         initialFolder={targetFolder}
+                        onLogout={handleLogout}
                     />
                 )}
 
@@ -547,6 +557,7 @@ function MainApp() {
                         onSelectNote={handleSelectNote}
                         onQuickReviewPress={() => handleSelectTab('study')}
                         initialSection="notes"
+                        onLogout={handleLogout}
                     />
                 )}
 

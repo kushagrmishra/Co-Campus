@@ -44,6 +44,7 @@ interface HomeScreenProps {
     onQuickReviewPress?: () => void;
     initialFolder?: SubjectFolder | null;
     initialSection?: 'folders' | 'notes';
+    onLogout?: () => void;
 }
 
 const DEFAULT_SUBJECTS: Array<{
@@ -88,6 +89,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     onSelectNote,
     onQuickReviewPress,
     initialFolder,
+    onLogout,
 }) => {
     const insets = useSafeAreaInsets();
     const topPadding = Platform.OS === 'android' ? Math.max(insets.top, StatusBar.currentHeight || 0, 16) : Math.max(insets.top, 10);
@@ -96,6 +98,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const [notes, setNotes] = useState<SavedNote[]>([]);
     const [allRecentNotes, setAllRecentNotes] = useState<SavedNote[]>([]);
     const [refreshing, setRefreshing] = useState<boolean>(false);
+    const [showAccountModal, setShowAccountModal] = useState<boolean>(false);
     const [studyStats, setStudyStats] = useState<StudyStats>({
         streakDays: 1,
         retentionPct: 85,
@@ -416,9 +419,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     >
                         <Ionicons name="folder-outline" size={16} color="#182232" />
                     </TouchableOpacity>
-                    <View style={styles.avatarCircle}>
-                        <Text style={styles.avatarInitial}>{username.charAt(0) || 'K'}</Text>
-                    </View>
+                    <TouchableOpacity
+                        style={styles.avatarCircle}
+                        onPress={() => setShowAccountModal(true)}
+                        activeOpacity={0.8}
+                        accessibilityLabel="Student Account Profile"
+                    >
+                        <Text style={styles.avatarInitial}>{(username.charAt(0) || 'K').toUpperCase()}</Text>
+                    </TouchableOpacity>
                 </View>
             </View>
 
@@ -816,6 +824,67 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     )}
                 </View>
             </ScrollView>
+
+            {/* Student Account & Cloud Sync Modal */}
+            <Modal visible={showAccountModal} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalBox}>
+                        <View style={styles.modalHeaderRow}>
+                            <Text style={styles.modalHeading}>Student Account</Text>
+                            <TouchableOpacity onPress={() => setShowAccountModal(false)}>
+                                <Ionicons name="close" size={22} color="#182232" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={{ alignItems: 'center', marginVertical: 18 }}>
+                            <View
+                                style={[
+                                    styles.avatarCircle,
+                                    {
+                                        width: 60,
+                                        height: 60,
+                                        borderRadius: 30,
+                                        backgroundColor: '#cde9d8',
+                                        marginBottom: 10,
+                                    },
+                                ]}
+                            >
+                                <Text style={[styles.avatarInitial, { fontSize: 24, color: '#082015' }]}>
+                                    {(username.charAt(0) || 'S').toUpperCase()}
+                                </Text>
+                            </View>
+                            <Text style={{ fontSize: 18, fontWeight: '700', color: '#182232' }}>
+                                {username}
+                            </Text>
+                            <Text style={{ fontSize: 13, color: '#4b6456', marginTop: 3 }}>
+                                Cloud Synchronized Academic Library
+                            </Text>
+                        </View>
+
+                        <TouchableOpacity
+                            style={[styles.modalConfirmBtn, { marginBottom: 12, paddingVertical: 13 }]}
+                            onPress={async () => {
+                                setShowAccountModal(false);
+                                await onRefresh();
+                            }}
+                        >
+                            <Text style={styles.modalConfirmText}>Sync Cloud Library Now</Text>
+                        </TouchableOpacity>
+
+                        {onLogout && (
+                            <TouchableOpacity
+                                style={[styles.modalConfirmBtn, { backgroundColor: '#ba1a1a', paddingVertical: 13 }]}
+                                onPress={() => {
+                                    setShowAccountModal(false);
+                                    onLogout();
+                                }}
+                            >
+                                <Text style={styles.modalConfirmText}>Sign Out / Switch Student Account</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                </View>
+            </Modal>
 
             {/* Term / Year Selector Modal */}
             <Modal visible={showTermModal} transparent animationType="fade">

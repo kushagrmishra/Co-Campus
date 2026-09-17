@@ -34,3 +34,5 @@ web-build/
 .agents/
 skills-lock.json
 .claude/
+.firebase/
+firebase-debug.log
