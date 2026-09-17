@@ -304,7 +304,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 return;
             }
             const result = await ImagePicker.launchCameraAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                mediaTypes: ['images'],
                 base64: true,
                 quality: 0.55,
             });
@@ -319,7 +319,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     const handlePickExamGallery = async () => {
         try {
             const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                mediaTypes: ['images'],
                 base64: true,
                 quality: 0.55,
             });
